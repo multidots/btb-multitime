@@ -1,0 +1,583 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Weekly Harvest Report</title>
+    <style>
+        /* Reset styles */
+        body,
+        table,
+        td,
+        p,
+        a {
+            margin: 0;
+            padding: 0;
+            border: 0;
+            font-size: 100%;
+            font: inherit;
+            vertical-align: baseline;
+        }
+
+        body {
+            background-color: #fdfcfb;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            line-height: 1.6;
+            color: #1D1E1C;
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
+        }
+
+        .email-container {
+            max-width: 640px;
+            margin: 0 auto;
+            background-color: #fdfcfb;
+            padding: 40px 20px;
+        }
+
+        .content-card {
+            background-color: #FFFFFF;
+            border-radius: 8px;
+            padding: 24px;
+            margin-bottom: 20px;
+        }
+
+        .logo {
+            text-align: center;
+            margin-bottom: 20px;
+        }
+
+        .logo-icon {
+            width: 35px;
+            height: 35px;
+            display: inline-block;
+            vertical-align: middle;
+        }
+
+        .logo-text {
+            color: #1D1E1C;
+            font-size: 18px;
+            font-weight: 700;
+            display: inline-block;
+            vertical-align: middle;
+        }
+
+        .report-title {
+            font-size: 28px;
+            font-weight: 700;
+            color: #1D1E1C;
+            text-align: left;
+            margin-bottom: 8px;
+        }
+
+        .date-range {
+            font-size: 16px;
+            color: #1D1E1C;
+            text-align: left;
+            margin-bottom: 24px;
+        }
+
+        .motivational-message {
+            text-align: left;
+            margin-bottom: 16px;
+            font-size: 16px;
+            color: #1D1E1C;
+        }
+
+        .star-icon {
+            color: #F06621;
+            display: inline-block;
+            margin-right: 4px;
+        }
+
+        .cta-link {
+            text-align: left;
+            margin-bottom: 32px;
+        }
+
+        .cta-link a {
+            color: #1d1e1c;
+            text-decoration: underline;
+            font-size: 16px;
+        }
+
+        .section-title {
+            font-size: 18px;
+            font-weight: 700;
+            color: #1D1E1C;
+            margin-bottom: 16px;
+        }
+
+        .capacity-text {
+            font-size: 14px;
+            color: #666666;
+            float: right;
+        }
+
+        .progress-bar-container {
+            width: 100%;
+            height: 24px;
+            background-color: #E5E5E5;
+            border-radius: 4px;
+            overflow: hidden;
+            margin: 16px 0;
+        }
+
+        .legend {
+            margin-top: 12px;
+        }
+
+        .legend-color {
+            width: 12px;
+            height: 12px;
+            border-radius: 2px;
+            display: inline-block;
+            margin-right: 8px;
+        }
+
+        .legend-label {
+            font-size: 14px;
+            color: #1D1E1C;
+        }
+
+        .legend-value {
+            font-size: 14px;
+            color: #1D1E1C;
+            font-weight: 500;
+        }
+
+        .chart-container {
+            margin: 10px 0 24px 0;
+        }
+
+        .bar-chart {
+            position: relative;
+            margin-bottom: 24px;
+        }
+
+        .bar-chart-hours {
+            font-size: 12px;
+            color: #1D1E1C;
+            margin-top: 4px;
+            font-weight: 600;
+        }
+
+        .project-name {
+            font-size: 14px;
+            color: #1D1E1C;
+            font-weight: 500;
+        }
+
+        .project-company {
+            font-size: 12px;
+            color: #666666;
+        }
+
+        .footer {
+            text-align: left;
+            font-size: 14px;
+            color: #666666;
+            margin-top: 32px;
+            line-height: 1.6;
+        }
+
+        .footer-link {
+            color: #1d1e1c;
+            text-decoration: underline;
+        }
+
+        /* Mobile Responsive */
+        @media only screen and (max-width: 600px) {
+            .email-container {
+                padding: 20px 10px;
+            }
+
+            .content-card {
+                padding: 20px;
+            }
+
+            .report-title {
+                font-size: 24px;
+            }
+
+            .section-title {
+                font-size: 16px;
+            }
+
+            .capacity-text {
+                float: none;
+                display: block;
+                margin-bottom: 8px;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"
+        style="background-color: #fff8f1;">
+        <tr>
+            <td align="center" style="padding: 40px 20px;">
+                <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"
+                    style="max-width: 520px;">
+                    <!-- Header -->
+                    <tr>
+                        <td align="left" style="padding-bottom: 20px;">
+                            <table role="presentation" cellpadding="0" cellspacing="0" border="0">
+                                <tr>
+                                    <td align="left" valign="middle">
+                                        <!-- Clock Icon - Replace YOUR_IMAGE_URL with your hosted clock icon PNG (35x35px) -->
+                                        <img src="./logo.png" width="160px" alt="MD Hourlog"
+                                            style="display: block; border: 0;" />
+                                    </td>
+                                </tr>
+                            </table>
+                        </td>
+                    </tr>
+
+                    <!-- Report Title -->
+                    <tr align="left">
+                        <td align="left">
+                            <h1 class="report-title"
+                                style="font-size: 28px; font-weight: 700; color: #1D1E1C; margin: 0;">
+                                Your Weekly Harvest Report
+                            </h1>
+                        </td>
+                    </tr>
+
+                    <!-- Date Range -->
+                    <tr align="left">
+                        <td align="left" style="padding-bottom: 24px;">
+                            <p class="date-range" style="font-size: 20px; font-weight: 600; color: #1D1E1C; margin: 0;">
+                                15 - 21 Dec 2025
+                            </p>
+                        </td>
+                    </tr>
+
+                    <!-- Motivational Message -->
+                    <tr align="left">
+                        <td align="left" style="padding-bottom: 40px;">
+                            <p class="motivational-message" style="font-size: 16px; color: #1D1E1C; margin: 0;">
+                                <span class="star-icon">💥</span><strong>Boom!</strong> You tracked time 4 days last week! <br />
+                                <a href="#" style="color: #1d1e1c; text-decoration: underline; font-size: 16px;">
+                                    Head to your timesheet</a> to keep it going.
+                            </p>
+                        </td>
+                    </tr>
+
+                    <!-- Total Hours Section -->
+                    <tr>
+                        <td>
+                            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"
+                                style="background-color: #FFFFFF; border-radius: 8px; padding: 24px; margin-bottom: 20px;">
+                                <tr>
+                                    <td>
+                                        <h2 class="section-title"
+                                            style="font-size: 18px; font-weight: 700; color: #1D1E1C; margin: 0 0 16px 0;">
+                                            <span>32.00 Total hours</span>
+                                            <span class="capacity-text"
+                                                style="font-size: 14px; color: #666666; float: right;">Capacity
+                                                40.00</span>
+                                        </h2>
+                                    </td>
+                                </tr>
+                                <tr>
+                                    <td>
+                                        <!-- Progress Bar - Table based for email compatibility -->
+                                        <table role="presentation" width="100%" cellpadding="0" cellspacing="0"
+                                            border="1px"
+                                            style="background-color: #E5E5E5; border-radius: 4px; height: 24px; margin: 16px 0; border: 1px solid #E5E5E5;">
+                                            <tr>
+                                                <td width="60%"
+                                                    style="background-color: #93C5FD; height: 24px; border-radius: 4px 0 0 4px;">
+                                                </td>
+                                                <td width="40%"
+                                                    style="background-color: #ffffff; height: 24px; border-radius: 0 4px 4px 0;">
+                                                </td>
+                                            </tr>
+                                        </table>
+                                    </td>
+                                </tr>
+                                <tr>
+                                    <td>
+                                        <!-- Legend - Table based for email compatibility -->
+                                        <table role="presentation" width="100%" cellpadding="0" cellspacing="0"
+                                            border="0" style="margin-top: 12px;">
+                                            <tr>
+                                                <td style="padding-bottom: 8px;">
+                                                    <table role="presentation" width="100%" cellpadding="0"
+                                                        cellspacing="0" border="0">
+                                                        <tr>
+                                                            <td width="1%" valign="middle" style="padding-right: 4px;">
+                                                                <span class="legend-color"
+                                                                    style="width: 12px; height: 12px; background-color: #2563EB; border-radius: 2px; display: inline-block;"></span>
+                                                            </td>
+                                                            <td valign="middle"
+                                                                style="font-size: 14px; color: #1D1E1C;">
+                                                                Billable hours
+                                                            </td>
+                                                            <td align="right" valign="middle"
+                                                                style="font-size: 14px; color: #1D1E1C; font-weight: 500;">
+                                                                20.00
+                                                            </td>
+                                                        </tr>
+                                                    </table>
+                                                </td>
+                                            </tr>
+                                            <tr>
+                                                <td>
+                                                    <table role="presentation" width="100%" cellpadding="0"
+                                                        cellspacing="0" border="0">
+                                                        <tr>
+                                                            <td width="1%" valign="middle" style="padding-right: 4px;">
+                                                                <span class="legend-color"
+                                                                    style="width: 12px; height: 12px; background-color: #93C5FD; border-radius: 2px; display: inline-block;"></span>
+                                                            </td>
+                                                            <td valign="middle"
+                                                                style="font-size: 14px; color: #1D1E1C;">
+                                                                Non-billable hours
+                                                            </td>
+                                                            <td align="right" valign="middle"
+                                                                style="font-size: 14px; color: #1D1E1C; font-weight: 500;">
+                                                                12.00
+                                                            </td>
+                                                        </tr>
+                                                    </table>
+                                                </td>
+                                            </tr>
+                                        </table>
+                                    </td>
+                                </tr>
+                            </table>
+                        </td>
+                    </tr>
+
+                    <!-- Tasks Section -->
+                    <tr>
+                        <td>
+                            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"
+                                style="background-color: #FFFFFF; border-radius: 8px; padding: 24px; margin-bottom: 20px;">
+                                <tr>
+                                    <td>
+                                        <h2 class="section-title"
+                                            style="font-size: 18px; font-weight: 700; color: #1D1E1C; margin: 0 0 16px 0;">
+                                            Tasks
+                                        </h2>
+                                    </td>
+                                </tr>
+                                <tr>
+                                    <td>
+                                        <!-- Bar Chart X-Axis - Table based for email compatibility -->
+                                        <table role="presentation" width="100%" cellpadding="0" cellspacing="0"
+                                            border="0" style="margin: 10px 0 24px 0;">
+                                            <tr>
+                                                <td width="14.28%" align="center"
+                                                    style="font-size: 13px; color: #1D1E1C;">
+                                                    <div>Mon</div>
+                                                    <div
+                                                        style="font-size: 13px; color: #1D1E1C; margin-top: 4px; font-weight: 600;">
+                                                        8.00</div>
+                                                </td>
+                                                <td width="14.28%" align="center"
+                                                    style="font-size: 13px; color: #1D1E1C;">
+                                                    <div>Tue</div>
+                                                    <div
+                                                        style="font-size: 13px; color: #1D1E1C; margin-top: 4px; font-weight: 600;">
+                                                        8.00</div>
+                                                </td>
+                                                <td width="14.28%" align="center"
+                                                    style="font-size: 13px; color: #1D1E1C;">
+                                                    <div>Wed</div>
+                                                    <div
+                                                        style="font-size: 13px; color: #1D1E1C; margin-top: 4px; font-weight: 600;">
+                                                        8.00</div>
+                                                </td>
+                                                <td width="14.28%" align="center"
+                                                    style="font-size: 13px; color: #1D1E1C;">
+                                                    <div>Thu</div>
+                                                    <div
+                                                        style="font-size: 13px; color: #1D1E1C; margin-top: 4px; font-weight: 600;">
+                                                        8.00</div>
+                                                </td>
+                                                <td width="14.28%" align="center"
+                                                    style="font-size: 13px; color: #1D1E1C;">
+                                                    <div>Fri</div>
+                                                    <div
+                                                        style="font-size: 13px; color: #1D1E1C; margin-top: 4px; font-weight: 600;">
+                                                        0.00</div>
+                                                </td>
+                                                <td width="14.28%" align="center"
+                                                    style="font-size: 13px; color: #1D1E1C;">
+                                                    <div>Sat</div>
+                                                    <div
+                                                        style="font-size: 13px; color: #1D1E1C; margin-top: 4px; font-weight: 600;">
+                                                        0.00</div>
+                                                </td>
+                                                <td width="14.28%" align="center"
+                                                    style="font-size: 13px; color: #1D1E1C;">
+                                                    <div>Sun</div>
+                                                    <div
+                                                        style="font-size: 13px; color: #1D1E1C; margin-top: 4px; font-weight: 600;">
+                                                        0.00</div>
+                                                </td>
+                                            </tr>
+                                        </table>
+                                    </td>
+                                </tr>
+                                <tr>
+                                    <td>
+                                        <!-- Donut Chart Legend - Table based for email compatibility -->
+                                        <table role="presentation" width="100%" cellpadding="0" cellspacing="0"
+                                            border="0">
+                                            <tr>
+                                                <td style="padding-bottom: 8px;">
+                                                    <table role="presentation" width="100%" cellpadding="0"
+                                                        cellspacing="0" border="0">
+                                                        <tr>
+                                                            <td width="1%" valign="middle" style="padding-right: 4px;">
+                                                                <span class="legend-color"
+                                                                    style="width: 12px; height: 12px; background-color: #3CA047; border-radius: 2px; display: inline-block;"></span>
+                                                            </td>
+                                                            <td valign="middle"
+                                                                style="font-size: 14px; color: #1D1E1C;">
+                                                                Employee Leave
+                                                            </td>
+                                                            <td align="right" valign="middle"
+                                                                style="font-size: 14px; color: #1D1E1C; font-weight: 500;">
+                                                                60%
+                                                            </td>
+                                                        </tr>
+                                                    </table>
+                                                </td>
+                                            </tr>
+                                            <tr>
+                                                <td>
+                                                    <table role="presentation" width="100%" cellpadding="0"
+                                                        cellspacing="0" border="0">
+                                                        <tr>
+                                                            <td width="1%" valign="middle" style="padding-right: 4px;">
+                                                                <span class="legend-color"
+                                                                    style="width: 12px; height: 12px; background-color: #F06621; border-radius: 2px; display: inline-block;"></span>
+                                                            </td>
+                                                            <td valign="middle"
+                                                                style="font-size: 14px; color: #1D1E1C;">
+                                                                Hourlog tool
+                                                            </td>
+                                                            <td align="right" valign="middle"
+                                                                style="font-size: 14px; color: #1D1E1C; font-weight: 500;">
+                                                                40%
+                                                            </td>
+                                                        </tr>
+                                                    </table>
+                                                </td>
+                                            </tr>
+                                        </table>
+                                    </td>
+                                </tr>
+                            </table>
+                        </td>
+                    </tr>
+
+                    <!-- Projects Section -->
+                    <tr>
+                        <td>
+                            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"
+                                style="background-color: #FFFFFF; border-radius: 8px; padding: 24px; margin-bottom: 20px;">
+                                <tr>
+                                    <td>
+                                        <h2 class="section-title"
+                                            style="font-size: 18px; font-weight: 700; color: #1D1E1C; margin: 0 0 16px 0;">
+                                            Projects
+                                        </h2>
+                                    </td>
+                                </tr>
+                                <tr>
+                                    <td>
+                                        <!-- Donut Chart Legend - Table based for email compatibility -->
+                                        <table role="presentation" width="100%" cellpadding="0" cellspacing="0"
+                                            border="0">
+                                            <tr>
+                                                <td style="padding-bottom: 8px;">
+                                                    <table role="presentation" width="100%" cellpadding="0"
+                                                        cellspacing="0" border="0">
+                                                        <tr>
+                                                            <td width="1%" valign="top"
+                                                                style="padding-right: 4px; padding-top: 5px;">
+                                                                <span class="legend-color"
+                                                                    style="width: 12px; height: 12px; background-color: #3CA047; border-radius: 2px; display: inline-block;"></span>
+                                                            </td>
+                                                            <td valign="top">
+                                                                <div class="project-name"
+                                                                    style="font-size: 14px; color: #1D1E1C; font-weight: 500;">
+                                                                    Leaves and Holidays</div>
+                                                                <div class="project-company"
+                                                                    style="font-size: 12px; color: #666666;">Multidots
+                                                                </div>
+                                                            </td>
+                                                            <td align="right" valign="top"
+                                                                style="font-size: 14px; color: #1D1E1C; font-weight: 500;">
+                                                                60%
+                                                            </td>
+                                                        </tr>
+                                                    </table>
+                                                </td>
+                                            </tr>
+                                            <tr>
+                                                <td>
+                                                    <table role="presentation" width="100%" cellpadding="0"
+                                                        cellspacing="0" border="0">
+                                                        <tr>
+                                                            <td width="1%" valign="top"
+                                                                style="padding-right: 4px; padding-top: 5px;">
+                                                                <span class="legend-color"
+                                                                    style="width: 12px; height: 12px; background-color: #F06621; border-radius: 2px; display: inline-block;"></span>
+                                                            </td>
+                                                            <td valign="top">
+                                                                <div class="project-name"
+                                                                    style="font-size: 14px; color: #1D1E1C; font-weight: 500;">
+                                                                    Sanity Learning</div>
+                                                                <div class="project-company"
+                                                                    style="font-size: 12px; color: #666666;">Multidots
+                                                                </div>
+                                                            </td>
+                                                            <td align="right" valign="top"
+                                                                style="font-size: 14px; color: #1D1E1C; font-weight: 500;">
+                                                                40%
+                                                            </td>
+                                                        </tr>
+                                                    </table>
+                                                </td>
+                                            </tr>
+                                        </table>
+                                    </td>
+                                </tr>
+                            </table>
+                        </td>
+                    </tr>
+
+                    <!-- Footer -->
+                    <tr>
+                        <td>
+                            <div class="footer"
+                                style="text-align: left; font-size: 14px; color: #666666; margin-top: 32px; line-height: 1.6;">
+                                <p style="margin: 0 0 8px 0;">
+                                    This report was generated from your Multidots account on 22/12/2025 at 1:38pm.
+                                    Something doesn't look right? <a href="#" class="footer-link"
+                                        style="color: #1d1e1c; text-decoration: underline;">Edit your timesheet</a>
+                                </p>
+                                <p style="margin: 0;">
+                                    If you're not interested in receiving this report, you can <a href="#"
+                                        class="footer-link"
+                                        style="color: #1d1e1c; text-decoration: underline;">unsubscribe</a>.
+                                </p>
+                            </div>
+                        </td>
+                    </tr>
+                </table>
+            </td>
+        </tr>
+    </table>
+</body>
+
+</html>
