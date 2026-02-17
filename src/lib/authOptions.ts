@@ -88,7 +88,7 @@ export const authOptions: NextAuthOptions = {
       return true
     },
 
-    async jwt({ token, user, account, trigger, session }) {
+    async jwt({ token, user, account, trigger, session }): Promise<any> {
       // Initial sign in with Google
       if (user && account?.provider === 'google') {
         const email = user.email?.toLowerCase()
@@ -128,6 +128,7 @@ export const authOptions: NextAuthOptions = {
 
       // Periodically refresh user data from Sanity (every time JWT is accessed)
       // This ensures role changes in Studio are reflected without requiring re-login
+      // IMPORTANT: If user is deleted/archived, invalidate the session to sign them out
       if (token.id && !user) {
         try {
           const freshUser = await client.fetch(
@@ -146,18 +147,26 @@ export const authOptions: NextAuthOptions = {
             { userId: token.id }
           )
 
-          if (freshUser) {
-            token.role = freshUser.role
-            token.firstName = freshUser.firstName
-            token.lastName = freshUser.lastName
-            token.rate = freshUser.rate
-            token.timezone = freshUser.timezone
-            token.avatar = freshUser.avatar
-            token.permissions = freshUser.permissions
-            token.team = freshUser.team
+          // If user is deleted or archived, invalidate the session
+          if (!freshUser) {
+            // Return null to invalidate the token and sign out the user
+            return null
           }
+
+          // Update token with fresh user data
+          token.role = freshUser.role
+          token.firstName = freshUser.firstName
+          token.lastName = freshUser.lastName
+          token.rate = freshUser.rate
+          token.timezone = freshUser.timezone
+          token.avatar = freshUser.avatar
+          token.permissions = freshUser.permissions
+          token.team = freshUser.team
         } catch (error) {
-          // Don't fail the request if refresh fails, use existing token data
+          // If there's an error fetching user data, invalidate session for safety
+          // This prevents users from staying logged in if there's a data issue
+          console.error('Error refreshing user data in JWT callback:', error)
+          return null
         }
       }
 

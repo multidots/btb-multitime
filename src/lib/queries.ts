@@ -38,6 +38,10 @@ export const PROJECT_QUERY = `*[_type == "project" && _id == $id][0]{
   billableType,
   projectType,
   dates,
+  // Use coalesce to default to 0 if stored value is null/undefined (ensures we always get a number)
+  "timesheetHours": coalesce(timesheetHours, 0),
+  "timesheetApprovedHours": coalesce(timesheetApprovedHours, 0),
+  "timesheetBillableHours": coalesce(timesheetBillableHours, 0),
   team->{_id, name},
   assignedUsers[]{
     user->{_id, firstName, lastName, avatar},
@@ -73,12 +77,14 @@ export const PROJECT_QUERY = `*[_type == "project" && _id == $id][0]{
     "timeEntryCount": count(*[_type == "timeEntry" && task._ref == ^._id && project._ref == $id]),
     "billableTimeEntryCount": count(*[_type == "timeEntry" && task._ref == ^._id && project._ref == $id && isBillable == true]),
     "totalHours": math::sum(*[_type == "timeEntry" && task._ref == ^._id && project._ref == $id].hours),
-    "billableHours": math::sum(*[_type == "timeEntry" && task._ref == ^._id && project._ref == $id && isBillable == true].hours)
+    "billableHours": math::sum(*[_type == "timeEntry" && task._ref == ^._id && project._ref == $id && isBillable == true].hours),
+    // Timesheet hours for this task (from new timesheet schema)
+    "timesheetHours": math::sum(*[_type == "timesheet" && $id in entries[].project._ref].entries[task._ref == ^._id && project._ref == $id].hours)
   },
   tags,
   permission,
-  "totalHours": math::sum(*[_type == "timeEntry" && references(^._id)].hours),
-  "totalBillableHours": math::sum(*[_type == "timeEntry" && references(^._id) && defined(task) && task->isBillable == true].hours),
+  // "totalHours": math::sum(*[_type == "timeEntry" && references(^._id)].hours),
+  // "totalBillableHours": math::sum(*[_type == "timeEntry" && references(^._id) && defined(task) && task->isBillable == true].hours),
   "timeEntries": *[_type == "timeEntry" && references(^._id)]{
     _id,
     date,
@@ -86,6 +92,22 @@ export const PROJECT_QUERY = `*[_type == "project" && _id == $id][0]{
     task->{isBillable}
   },
   isActive
+}`
+
+// Separate query for timesheet user breakdown (loaded after initial project load)
+export const PROJECT_TIMESHEET_USER_HOURS_QUERY = `{
+  "timesheetEntriesWithUsers": *[_type == "timesheet" && $projectId in entries[].project._ref]{
+    "user": user->{_id, firstName, lastName},
+    "status": status,
+    "entries": entries[project._ref == $projectId]{
+      _key,
+      date,
+      hours,
+      isBillable,
+      notes,
+      "taskId": task._ref
+    }
+  }
 }`
 
 export const PROJECTS_QUERY = `*[_type == "project" && (isActive == true || isArchived == true) && ($userRole != "manager" || $userId in assignedUsers[].user._ref )] | order(name asc){
@@ -116,8 +138,11 @@ export const PROJECTS_QUERY = `*[_type == "project" && (isActive == true || isAr
     category,
     estimatedHours
   },
-  "timeEntries": count(*[_type == "timeEntry" && references(^._id)]),
-  "totalHours": math::sum(*[_type == "timeEntry" && references(^._id)].hours),
+  // Read stored timesheet hours instead of computing live (much faster!)
+  // Use coalesce to default to 0 if stored value is null/undefined (ensures we always get a number)
+  "timesheetHours": coalesce(timesheetHours, 0),
+  "timesheetApprovedHours": coalesce(timesheetApprovedHours, 0),
+  "timesheetBillableHours": coalesce(timesheetBillableHours, 0),
   permission,
   isActive,
   isArchived
@@ -151,8 +176,11 @@ export const USER_ASSIGNED_PROJECTS_QUERY = `*[_type == "project" && (isActive =
     category,
     estimatedHours
   },
-  "timeEntries": count(*[_type == "timeEntry" && references(^._id)]),
-  "totalHours": math::sum(*[_type == "timeEntry" && references(^._id)].hours),
+  // Read stored timesheet hours instead of computing live (much faster!)
+  // Use coalesce to default to 0 if stored value is null/undefined (ensures we always get a number)
+  "timesheetHours": coalesce(timesheetHours, 0),
+  "timesheetApprovedHours": coalesce(timesheetApprovedHours, 0),
+  "timesheetBillableHours": coalesce(timesheetBillableHours, 0),
   permission,
   isActive,
   isArchived
@@ -219,8 +247,8 @@ export const ADMIN_DASHBOARD_QUERY = `{
   "activeProjects": count(*[_type == "project" && isActive == true]),
   "totalUsers": count(*[_type == "user" && isActive == true && isArchived != true]),
   "totalClients": count(*[_type == "client" && !(_id in path("drafts.**"))]),
-  "thisWeekHours": math::sum(*[_type == "timeEntry" && date >= $weekStart && date <= $weekEnd && isBillable == true].hours),
-  "thisMonthHours": math::sum(*[_type == "timeEntry" && date >= $monthStart && date <= $monthEnd && isBillable == true].hours),
+  "thisWeekHours": math::sum(*[_type == "timesheet" && status == "approved" && weekStart <= $weekEnd && weekEnd >= $weekStart].entries[date >= $weekStart && date <= $weekEnd && isBillable == true].hours),
+  "thisMonthHours": math::sum(*[_type == "timesheet" && status == "approved" && weekStart <= $monthEnd && weekEnd >= $monthStart].entries[date >= $monthStart && date <= $monthEnd && isBillable == true].hours),
   "pendingTimeEntries": count(*[_type == "timeEntry" && isLocked == true && (isApproved == false || isApproved == null)]),
   "recentProjects": *[_type == "project" && isActive == true] | order(_createdAt desc)[0..4]{
     _id,
@@ -230,13 +258,16 @@ export const ADMIN_DASHBOARD_QUERY = `{
     status,
     dates
   },
-  "recentTimeEntries": *[_type == "timeEntry"] | order(_createdAt desc)[0..9]{
+  "recentTimesheets": *[_type == "timesheet"] | order(_updatedAt desc)[0..20]{
     _id,
-    user->{firstName, lastName},
-    project->{name, code},
-    date,
-    hours,
-    isBillable
+    "user": user->{ firstName, lastName },
+    "entries": entries[] {
+      _key,
+      date,
+      hours,
+      isBillable,
+      "project": *[_type == "project" && _id == ^.project._ref][0]{ name, code }
+    }
   }
 }`
 
@@ -585,4 +616,383 @@ export const JOB_CATEGORIES_QUERY = `*[_type == "jobcategory" ] | order(name asc
   _id,
   name,
   slug
+}`
+
+// ============================================
+// TIMESHEET QUERIES (Weekly-based time tracking)
+// ============================================
+
+// Get timesheet by ID with expanded entries
+export const TIMESHEET_QUERY = `*[_type == "timesheet" && _id == $id][0]{
+  _id,
+  user->{_id, firstName, lastName, email, avatar},
+  weekStart,
+  weekEnd,
+  year,
+  weekNumber,
+  status,
+  entries[]{
+    _key,
+    date,
+    "project": *[_type == "project" && _id == ^.project._ref][0]{_id, name, code, client->{_id, name}},
+    "task": *[_type == "task" && _id == ^.task._ref][0]{_id, name, isBillable},
+    hours,
+    notes,
+    isBillable,
+    startTime,
+    endTime,
+    isRunning,
+    createdAt,
+    updatedAt
+  },
+  totalHours,
+  billableHours,
+  nonBillableHours,
+  hasRunningTimer,
+  submittedAt,
+  approvedBy->{_id, firstName, lastName},
+  approvedAt,
+  isLocked,
+  createdAt,
+  updatedAt
+}`
+
+// Get timesheet by user and week
+export const TIMESHEET_BY_USER_WEEK_QUERY = `*[_type == "timesheet" && user._ref == $userId && weekStart == $weekStart][0]{
+  _id,
+  user->{_id, firstName, lastName, email},
+  weekStart,
+  weekEnd,
+  year,
+  weekNumber,
+  status,
+  entries[]{
+    _key,
+    date,
+    "project": *[_type == "project" && _id == ^.project._ref][0]{_id, name, code, client->{_id, name}},
+    "task": *[_type == "task" && _id == ^.task._ref][0]{_id, name, isBillable},
+    hours,
+    notes,
+    isBillable,
+    startTime,
+    endTime,
+    isRunning,
+    createdAt,
+    updatedAt
+  },
+  totalHours,
+  billableHours,
+  nonBillableHours,
+  hasRunningTimer,
+  submittedAt,
+  approvedBy->{_id, firstName, lastName},
+  approvedAt,
+  isLocked,
+  createdAt,
+  updatedAt
+}`
+
+// Get approved timesheet by user and week
+export const APPROVED_TIMESHEET_BY_USER_WEEK_QUERY = `*[_type == "timesheet" && user._ref == $userId && weekStart == $weekStart && status == "approved"][0]{
+  _id,
+  user->{_id, firstName, lastName, email},
+  weekStart,
+  weekEnd,
+  year,
+  weekNumber,
+  status,
+  entries[]{
+    _key,
+    date,
+    "project": *[_type == "project" && _id == ^.project._ref][0]{_id, name, code, client->{_id, name}},
+    "task": *[_type == "task" && _id == ^.task._ref][0]{_id, name, isBillable},
+    hours,
+    notes,
+    isBillable,
+    startTime,
+    endTime,
+    isRunning,
+    createdAt,
+    updatedAt
+  },
+  totalHours,
+  billableHours,
+  nonBillableHours,
+  hasRunningTimer,
+  submittedAt,
+  approvedBy->{_id, firstName, lastName},
+  approvedAt,
+  isLocked,
+  createdAt,
+  updatedAt
+}`
+
+// Get user's timesheets for date range
+export const USER_TIMESHEETS_QUERY = `*[_type == "timesheet" && user._ref == $userId && weekStart >= $startDate && weekEnd <= $endDate] | order(weekStart desc){
+  _id,
+  weekStart,
+  weekEnd,
+  year,
+  weekNumber,
+  status,
+  totalHours,
+  billableHours,
+  hasRunningTimer,
+  submittedAt,
+  approvedAt,
+  isLocked
+}`
+
+// Get running timer from timesheets
+export const RUNNING_TIMER_TIMESHEET_QUERY = `*[_type == "timesheet" && user._ref == $userId && hasRunningTimer == true][0]{
+  _id,
+  weekStart,
+  "runningEntry": entries[isRunning == true][0]{
+    _key,
+    date,
+    "project": *[_type == "project" && _id == ^.project._ref][0]{_id, name, code},
+    "task": *[_type == "task" && _id == ^.task._ref][0]{_id, name},
+    startTime,
+    notes
+  }
+}`
+
+// Admin: Get pending timesheets
+export const PENDING_TIMESHEETS_QUERY = `*[_type == "timesheet" && status == "submitted"] | order(submittedAt asc){
+  _id,
+  user->{_id, firstName, lastName, email, avatar},
+  weekStart,
+  weekEnd,
+  year,
+  weekNumber,
+  status,
+  entries[]{
+    _key,
+    date,
+    "project": *[_type == "project" && _id == ^.project._ref][0]{_id, name, code},
+    "task": *[_type == "task" && _id == ^.task._ref][0]{_id, name, isBillable},
+    hours,
+    notes,
+    isBillable
+  },
+  totalHours,
+  billableHours,
+  nonBillableHours,
+  submittedAt
+}`
+
+// Manager: Get team's pending timesheets
+export const MANAGER_TEAM_TIMESHEETS_QUERY = `*[_type == "timesheet" && status == "submitted" && (
+  user._ref in *[_type == "team" && manager._ref == $managerId && isActive == true].members[]._ref ||
+  user._ref in *[_type == "project" && (isActive == true || isArchived == true) && count(assignedUsers[user._ref == $managerId && role == "Project Manager"]) > 0].assignedUsers[].user._ref
+)] | order(submittedAt asc){
+  _id,
+  user->{_id, firstName, lastName, email, avatar},
+  weekStart,
+  weekEnd,
+  status,
+  entries[]{
+    _key,
+    date,
+    "project": *[_type == "project" && _id == ^.project._ref][0]{_id, name, code},
+    "task": *[_type == "task" && _id == ^.task._ref][0]{_id, name, isBillable},
+    hours,
+    isBillable
+  },
+  totalHours,
+  billableHours,
+  submittedAt
+}`
+
+// Timesheet report query
+export const TIMESHEET_REPORT_QUERY = `*[_type == "timesheet" && weekStart <= $endDate && weekEnd >= $startDate]{
+  _id,
+  user->{_id, firstName, lastName},
+  weekStart,
+  weekEnd,
+  status,
+  "entries": entries[date >= $startDate && date <= $endDate]{
+    _key,
+    date,
+    "project": *[_type == "project" && _id == ^.project._ref][0]{_id, name, code, client->{_id, name}, isActive, isArchived},
+    "task": *[_type == "task" && _id == ^.task._ref][0]{_id, name},
+    hours,
+    notes,
+    isBillable
+  }
+}`
+
+// Count of timesheets for "All" report (same filter as cursor) – for total pages
+export const TIMESHEET_REPORT_COUNT_QUERY = `count(*[_type == "timesheet" && weekStart <= $endDate && weekEnd >= $startDate && count(entries[date >= $startDate && date <= $endDate]) > 0])`
+
+// Total hours for "All" report (same filter as paginated) – single aggregate for header/footer
+export const TIMESHEET_REPORT_TOTAL_HOURS_QUERY = `{
+  "totalHours": math::sum((*[_type == "timesheet" && weekStart <= $endDate && weekEnd >= $startDate && count(entries[date >= $startDate && date <= $endDate]) > 0]{ "s": math::sum(entries[date >= $startDate && date <= $endDate].hours) })[].s)
+}`
+
+// Paginated timesheet report for "All" – slice-based (can hit API limits on high page numbers)
+export const TIMESHEET_REPORT_QUERY_PAGINATED = `*[_type == "timesheet" && weekStart <= $endDate && weekEnd >= $startDate && count(entries[date >= $startDate && date <= $endDate]) > 0] | order(weekStart asc) [$sliceStart...$sliceEnd]{
+  _id,
+  user->{_id, firstName, lastName},
+  weekStart,
+  weekEnd,
+  status,
+  "entries": entries[date >= $startDate && date <= $endDate]{
+    _key,
+    date,
+    "project": *[_type == "project" && _id == ^.project._ref][0]{_id, name, code, client->{_id, name}, isActive, isArchived},
+    "task": *[_type == "task" && _id == ^.task._ref][0]{_id, name},
+    hours,
+    notes,
+    isBillable
+  }
+}`
+
+// Cursor-based pagination for "All" – newest first; Next page = older data (weekStart < cursor)
+// Pass lastWeekStart: null, lastId: null for first page; cursor = last item of current page for next (older) page
+export const TIMESHEET_REPORT_QUERY_CURSOR = `*[_type == "timesheet" && weekStart <= $endDate && weekEnd >= $startDate && count(entries[date >= $startDate && date <= $endDate]) > 0 && ($lastWeekStart == null || (weekStart < $lastWeekStart || (weekStart == $lastWeekStart && _id < $lastId)))] | order(weekStart desc, _id desc) [0...$pageSize]{
+  _id,
+  user->{_id, firstName, lastName},
+  weekStart,
+  weekEnd,
+  status,
+  "entries": entries[date >= $startDate && date <= $endDate]{
+    _key,
+    date,
+    "project": *[_type == "project" && _id == ^.project._ref][0]{_id, name, code, client->{_id, name}, isActive, isArchived},
+    "task": *[_type == "task" && _id == ^.task._ref][0]{_id, name},
+    hours,
+    notes,
+    isBillable
+  }
+}`
+
+// Timesheet report query for client filter
+export const TIMESHEET_REPORT_QUERY_FOR_CLIENT = `*[_type == "timesheet" && weekStart <= $endDate && weekEnd >= $startDate && count(entries[date >= $startDate && date <= $endDate && project._ref in *[_type == "project" && client._ref == $clientId]._id]) > 0]{
+  _id,
+  user->{_id, firstName, lastName},
+  weekStart,
+  weekEnd,
+  status,
+  "entries": entries[date >= $startDate && date <= $endDate && project._ref in *[_type == "project" && client._ref == $clientId]._id]{
+    _key,
+    date,
+    "project": *[_type == "project" && _id == ^.project._ref][0]{_id, name, code, client->{_id, name}, isActive, isArchived},
+    "task": *[_type == "task" && _id == ^.task._ref][0]{_id, name},
+    hours,
+    notes,
+    isBillable
+  }
+}`
+
+// Timesheet report query for project filter (single project)
+export const TIMESHEET_REPORT_QUERY_FOR_PROJECT = `*[_type == "timesheet" && weekStart <= $endDate && weekEnd >= $startDate && count(entries[date >= $startDate && date <= $endDate && project._ref == $projectId]) > 0]{
+  _id,
+  user->{_id, firstName, lastName},
+  weekStart,
+  weekEnd,
+  status,
+  "entries": entries[date >= $startDate && date <= $endDate && project._ref == $projectId]{
+    _key,
+    date,
+    "project": *[_type == "project" && _id == ^.project._ref][0]{_id, name, code, client->{_id, name}, isActive, isArchived},
+    "task": *[_type == "task" && _id == ^.task._ref][0]{_id, name},
+    hours,
+    notes,
+    isBillable
+  }
+}`
+
+// Timesheet report query for multiple projects filter
+export const TIMESHEET_REPORT_QUERY_FOR_PROJECTS = `*[_type == "timesheet" && weekStart <= $endDate && weekEnd >= $startDate && count(entries[date >= $startDate && date <= $endDate && project._ref in $projectIds]) > 0]{
+  _id,
+  user->{_id, firstName, lastName},
+  weekStart,
+  weekEnd,
+  status,
+  "entries": entries[date >= $startDate && date <= $endDate && project._ref in $projectIds]{
+    _key,
+    date,
+    "project": *[_type == "project" && _id == ^.project._ref][0]{_id, name, code, client->{_id, name}, isActive, isArchived},
+    "task": *[_type == "task" && _id == ^.task._ref][0]{_id, name},
+    hours,
+    notes,
+    isBillable
+  }
+}`
+
+// Timesheet report query for task filter (single task)
+export const TIMESHEET_REPORT_QUERY_FOR_TASK = `*[_type == "timesheet" && weekStart <= $endDate && weekEnd >= $startDate && count(entries[date >= $startDate && date <= $endDate && task._ref == $taskId]) > 0]{
+  _id,
+  user->{_id, firstName, lastName},
+  weekStart,
+  weekEnd,
+  status,
+  "entries": entries[date >= $startDate && date <= $endDate && task._ref == $taskId]{
+    _key,
+    date,
+    "project": *[_type == "project" && _id == ^.project._ref][0]{_id, name, code, client->{_id, name}, isActive, isArchived},
+    "task": *[_type == "task" && _id == ^.task._ref][0]{_id, name},
+    hours,
+    notes,
+    isBillable
+  }
+}`
+
+// Timesheet report query for multiple tasks filter
+export const TIMESHEET_REPORT_QUERY_FOR_TASKS = `*[_type == "timesheet" && weekStart <= $endDate && weekEnd >= $startDate && count(entries[date >= $startDate && date <= $endDate && task._ref in $taskIds]) > 0]{
+  _id,
+  user->{_id, firstName, lastName},
+  weekStart,
+  weekEnd,
+  status,
+  "entries": entries[date >= $startDate && date <= $endDate && task._ref in $taskIds]{
+    _key,
+    date,
+    "project": *[_type == "project" && _id == ^.project._ref][0]{_id, name, code, client->{_id, name}, isActive, isArchived},
+    "task": *[_type == "task" && _id == ^.task._ref][0]{_id, name},
+    hours,
+    notes,
+    isBillable
+  }
+}`
+
+// Timesheet report query for user filter
+export const USER_TIMESHEET_REPORT_QUERY = `*[_type == "timesheet" && user._ref == $userId && weekStart <= $endDate && weekEnd >= $startDate]{
+  _id,
+  user->{_id, firstName, lastName},
+  weekStart,
+  weekEnd,
+  status,
+  "entries": entries[date >= $startDate && date <= $endDate]{
+    _key,
+    date,
+    "project": *[_type == "project" && _id == ^.project._ref][0]{_id, name, code, client->{_id, name}, isActive, isArchived},
+    "task": *[_type == "task" && _id == ^.task._ref][0]{_id, name},
+    hours,
+    notes,
+    isBillable
+  }
+}`
+
+// Manager timesheet report query
+export const MANAGER_TIMESHEET_REPORT_QUERY = `*[_type == "timesheet" && weekStart <= $endDate && weekEnd >= $startDate && (
+  user._ref == $managerId ||
+  user._ref in *[_type == "team" && manager._ref == $managerId && isActive == true].members[]._ref ||
+  user._ref in *[_type == "project" && (isActive == true || isArchived == true) && count(assignedUsers[user._ref == $managerId && role == "Project Manager"]) > 0].assignedUsers[].user._ref
+)]{
+  _id,
+  user->{_id, firstName, lastName},
+  weekStart,
+  weekEnd,
+  status,
+  "entries": entries[date >= $startDate && date <= $endDate]{
+    _key,
+    date,
+    "project": *[_type == "project" && _id == ^.project._ref][0]{_id, name, code, client->{_id, name}, isActive, isArchived},
+    "task": *[_type == "task" && _id == ^.task._ref][0]{_id, name},
+    hours,
+    notes,
+    isBillable
+  }
 }`

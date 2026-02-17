@@ -8,6 +8,26 @@ if (process.env.SENDGRID_API_KEY) {
 }
 
 const FROM_EMAIL = process.env.FROM_EMAIL || 'noreply@yourdomain.com'
+const FROM_NAME = process.env.FROM_NAME || 'Multitime'
+
+// Format from address with name if provided
+const getFromAddress = (): string => {
+  return FROM_NAME ? `${FROM_NAME} <${FROM_EMAIL}>` : FROM_EMAIL
+}
+
+// Get list of disallowed notification emails from environment variable
+const getDisallowedNotificationEmails = (): string[] => {
+  const disallowedEmails = process.env.DISALLOWED_NOTIFICATION_EMAILS
+  if (!disallowedEmails) return [] // If not set, allow all (backward compatible)
+  return disallowedEmails.split(',').map(email => email.trim().toLowerCase())
+}
+
+// Check if an email is disallowed from receiving notification emails
+export const isEmailDisallowed = (email: string): boolean => {
+  const disallowedList = getDisallowedNotificationEmails()
+  if (disallowedList.length === 0) return false // If no restriction, allow all
+  return disallowedList.includes(email.toLowerCase())
+}
 
 // Debug: Log the FROM_EMAIL on module load
 
@@ -54,14 +74,15 @@ function saveEmailForPreview(email: EmailOptions & { from: string }) {
 
 export async function sendEmail({ to, subject, html, text }: EmailOptions): Promise<boolean> {
   try {
+    const fromAddress = getFromAddress()
     // If no API key, save for local preview
     if (!process.env.SENDGRID_API_KEY) {
       
-      saveEmailForPreview({ to, subject, html, text, from: FROM_EMAIL })
+      saveEmailForPreview({ to, subject, html, text, from: fromAddress })
       return true
     }
     await sgMail.send({
-      from: FROM_EMAIL,
+      from: fromAddress,
       to,
       subject,
       html,
@@ -82,11 +103,12 @@ export async function sendBatchEmails(
   let failed = 0
   const errors: string[] = []
 
+  const fromAddress = getFromAddress()
   // If no API key, save for local preview
   if (!process.env.SENDGRID_API_KEY) {
     
     emails.forEach((email, i) => {
-      saveEmailForPreview({ ...email, from: FROM_EMAIL })
+      saveEmailForPreview({ ...email, from: fromAddress })
     })
     
     
@@ -107,7 +129,7 @@ export async function sendBatchEmails(
     const results = await Promise.allSettled(
       batch.map(email =>
         sgMail.send({
-          from: FROM_EMAIL,
+          from: fromAddress,
           to: email.to,
           subject: email.subject,
           html: email.html,
@@ -198,7 +220,7 @@ export function generateWeeklyReminderEmail(
                                             <table role="presentation" cellpadding="0" cellspacing="0" border="0">
                                                 <tr>
                                                     <td align="left" valign="middle" style="padding-right: 8px;">
-                                                        <img src="${baseUrl}/aseets/logo.png" alt="MD Hourlog" width="160" style="display: block; border: 0;" />
+                                                        <img src="${baseUrl}/aseets/logo.png" alt="Multitime" width="160" style="display: block; border: 0;" />
                                                     </td>
                                                 </tr>
                                             </table>
@@ -273,7 +295,7 @@ This is a reminder that your timesheets are due by 5:00pm on Fridays. Please tak
 Track time: ${dashboardUrl}
 
 ---
-MD Hourlog
+Multitime
   `
 
   return { html, text }
@@ -330,13 +352,13 @@ export function generateWeeklyReportEmail(
               <!-- Logo -->
               <tr>
                 <td style="padding-bottom: 40px;">
-                  <img src="${baseUrl}/aseets/logo.png" alt="MD Hourlog" width="160" style="display: block; border: 0;" />
+                  <img src="${baseUrl}/aseets/logo.png" alt="Multitime" width="160" style="display: block; border: 0;" />
                 </td>
               </tr>
               <!-- Heading -->
               <tr>
                 <td style="padding-bottom: 8px;">
-                  <h1 style="margin: 0; font-size: 32px; font-weight: 700; color: #1a1a1a; line-height: 1.2;">Your Weekly <span style="background-color: #fef3c7; padding: 0 4px;">MD Hourlog</span> Report</h1>
+                  <h1 style="margin: 0; font-size: 32px; font-weight: 700; color: #1a1a1a; line-height: 1.2;">Your Weekly <span style="background-color: #fef3c7; padding: 0 4px;">Multitime</span> Report</h1>
                 </td>
               </tr>
               <!-- Date Range -->
@@ -446,8 +468,8 @@ export function generateWeeklyReportEmail(
     </html>
   `
 
-  const text = `
-Your Weekly MD Hourlog Report
+const text = `
+Your Weekly Multitime Report
 ${weekStart} – ${weekEnd}
 
 🎉 You did it! You tracked time ${daysTracked} day${daysTracked !== 1 ? 's' : ''} last week!
@@ -464,7 +486,7 @@ ${dailyTextRows}
 Total: ${totalHours.toFixed(1)}h
 
 ---
-MD Hourlog
+Multitime
   `
 
   return { html, text }
@@ -527,7 +549,7 @@ export function generateTimesheetSubmissionEmail(
                                             <table role="presentation" cellpadding="0" cellspacing="0" border="0">
                                                 <tr>
                                                     <td align="left" valign="middle" style="padding-right: 8px;">
-                                                        <img src="${baseUrl}/aseets/logo.png" alt="MD Hourlog" width="160" style="display: block; border: 0;" />
+                                                        <img src="${baseUrl}/aseets/logo.png" alt="Multitime" width="160" style="display: block; border: 0;" />
                                                     </td>
                                                 </tr>
                                             </table>
@@ -594,7 +616,7 @@ export function generateTimesheetSubmissionEmail(
     </html>
   `
 
-  const text = `
+const text = `
 ${submitterName} has submitted a timesheet.
 
 ${submitterName} has just submitted a timesheet for ${weekStart} – ${weekEnd}.
@@ -602,7 +624,7 @@ ${submitterName} has just submitted a timesheet for ${weekStart} – ${weekEnd}.
 Review hours: ${reviewUrl}
 
 ---
-MD Hourlog
+Multitime
   `
 
   return { html, text }
@@ -626,7 +648,7 @@ export function generateNoHoursReminderEmail(
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Weekly MD Hourlog Report</title>
+        <title>Weekly Multitime Report</title>
         <style>
             body, table, td, p, a {
                 margin: 0;
@@ -662,7 +684,7 @@ export function generateNoHoursReminderEmail(
                                 <table role="presentation" cellpadding="0" cellspacing="0" border="0">
                                     <tr>
                                         <td align="left" valign="middle">
-                                            <img src="${baseUrl}/aseets/logo.png" width="160px" alt="MD Hourlog" style="display: block; border: 0;" />
+                                            <img src="${baseUrl}/aseets/logo.png" width="160px" alt="Multitime" style="display: block; border: 0;" />
                                         </td>
                                     </tr>
                                 </table>
@@ -673,7 +695,7 @@ export function generateNoHoursReminderEmail(
                         <tr align="left">
                             <td align="left">
                                 <h1 style="font-size: 28px; font-weight: 700; color: #1D1E1C; margin: 0;">
-                                    Your Weekly MD Hourlog Report
+                                    Your Weekly Multitime Report
                                 </h1>
                             </td>
                         </tr>
@@ -705,8 +727,8 @@ export function generateNoHoursReminderEmail(
                         <tr>
                             <td>
                                 <div style="text-align: left; font-size: 14px; color: #666666; margin-top: 32px; line-height: 1.6;">
-                                    <p style="margin: 0 0 8px 0;">
-                                        This report was generated from your MD Hourlog account on ${formattedDate} at ${formattedTime}.
+                                        <p style="margin: 0 0 8px 0;">
+                                        This report was generated from your Multitime account on ${formattedDate} at ${formattedTime}.
                                         Something doesn't look right? <a href="${dashboardUrl}" style="color: #1d1e1c; text-decoration: underline;">Edit your timesheet</a>
                                     </p>
                                 </div>
@@ -720,8 +742,8 @@ export function generateNoHoursReminderEmail(
     </html>
   `
 
-  const text = `
-Your Weekly MD Hourlog Report
+const text = `
+Your Weekly Multitime Report
 ${weekStart} – ${weekEnd}
 
 No hours were tracked last week.
@@ -730,7 +752,7 @@ When you track time, you'll see a summary report here.
 Track your time: ${dashboardUrl}
 
 ---
-This report was generated from your MD Hourlog account on ${formattedDate} at ${formattedTime}.
+This report was generated from your Multitime account on ${formattedDate} at ${formattedTime}.
   `
 
   return { html, text }
@@ -791,7 +813,7 @@ export function generateUnsubmittedReminderEmail(
                                             <table role="presentation" cellpadding="0" cellspacing="0" border="0">
                                                 <tr>
                                                     <td align="left" valign="middle" style="padding-right: 8px;">
-                                                        <img src="${baseUrl}/aseets/logo.png" alt="MD Hourlog" width="160" style="display: block; border: 0;" />
+                                                        <img src="${baseUrl}/aseets/logo.png" alt="Multitime" width="160" style="display: block; border: 0;" />
                                                     </td>
                                                 </tr>
                                             </table>
@@ -927,7 +949,7 @@ export function generatePastDueReminderEmail(
                                             <table role="presentation" cellpadding="0" cellspacing="0" border="0">
                                                 <tr>
                                                     <td align="left" valign="middle" style="padding-right: 8px;">
-                                                        <img src="${baseUrl}/aseets/logo.png" alt="MD Hourlog" width="160" style="display: block; border: 0;" />
+                                                        <img src="${baseUrl}/aseets/logo.png" alt="Multitime" width="160" style="display: block; border: 0;" />
                                                     </td>
                                                 </tr>
                                             </table>

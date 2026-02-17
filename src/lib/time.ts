@@ -18,6 +18,33 @@ export function formatDecimalHours(hours: number | string): number {
 }
 
 /**
+ * Convert hours value (number or H:MM string) to decimal number
+ * @param hours - Hours value as number or H:MM string (e.g., "2:30")
+ * @returns Decimal hours as number
+ */
+export function hoursToDecimal(hours: number | string): number {
+  if (typeof hours === 'number') {
+    return isNaN(hours) ? 0 : hours
+  }
+  
+  if (typeof hours === 'string') {
+    // Check if it's H:MM format
+    const timeMatch = hours.match(/^(\d+):(\d{2})$/)
+    if (timeMatch) {
+      const hoursPart = parseInt(timeMatch[1], 10)
+      const minutesPart = parseInt(timeMatch[2], 10)
+      return hoursPart + (minutesPart / 60)
+    }
+    
+    // Try to parse as decimal string
+    const decimal = parseFloat(hours)
+    return isNaN(decimal) ? 0 : decimal
+  }
+  
+  return 0
+}
+
+/**
  * Format decimal hours to hours:minutes string (H:MM format)
  * @param decimalHours - The decimal hours to format
  * @returns Formatted time string (e.g., "1:30", "0:15", "8:45")
