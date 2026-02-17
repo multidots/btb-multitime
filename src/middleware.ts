@@ -6,6 +6,7 @@ const PUBLIC_API_ROUTES = [
   '/api/auth',      // NextAuth routes must be public
   '/api/cron',      // Cron jobs (protected by CRON_SECRET)
   '/api/email-preview', // Development only (protected by NODE_ENV check)
+  '/api/ui-settings',
 ]
 
 // Allowed origins for CORS
@@ -47,7 +48,7 @@ export default withAuth(
       response.headers.set('X-Content-Type-Options', 'nosniff')
       response.headers.set('X-Frame-Options', 'DENY')
       response.headers.set('Cache-Control', 'no-store, max-age=0')
-      
+
       // Set CORS headers for allowed origins
       if (origin && isAllowedOrigin(origin)) {
         response.headers.set('Access-Control-Allow-Origin', origin)
@@ -55,7 +56,7 @@ export default withAuth(
         response.headers.set('Access-Control-Allow-Headers', 'Content-Type, Authorization')
         response.headers.set('Access-Control-Allow-Credentials', 'true')
       }
-      
+
       return response
     }
 
@@ -87,22 +88,22 @@ export default withAuth(
     callbacks: {
       authorized: ({ token, req }) => {
         const path = req.nextUrl.pathname
-        
+
         // Handle OPTIONS preflight requests
         if (req.method === 'OPTIONS') {
           return true
         }
-        
+
         // Allow public API routes without authentication
         if (path.startsWith('/api/') && isPublicApiRoute(path)) {
           return true
         }
-        
+
         // For Studio routes, allow Sanity native auth
         if (path.startsWith('/studio')) {
           return true
         }
-        
+
         // All other routes require authentication
         return !!token
       },

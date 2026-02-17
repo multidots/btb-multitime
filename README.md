@@ -1,4 +1,4 @@
-# MD Hourlog: Time Tracking Application
+# Multitime: Time Tracking Application
 
 A comprehensive time tracking and project management application built with Next.js 14, React 18, Sanity CMS, and NextAuth.js. Designed for teams to efficiently track billable hours, manage projects, and generate detailed reports.
 
@@ -368,7 +368,7 @@ A comprehensive time tracking and project management application built with Next
 1. **Clone the repository**
 ```bash
 git clone <repository-url>
-cd sanity-mdhourlog-app
+cd sanity-multitime-app
 ```
 
 2. **Install dependencies**
@@ -455,7 +455,7 @@ NEXT_PUBLIC_APP_URL=http://localhost:3000
 ## 📂 Project Structure
 
 ```
-sanity-mdhourlog-app/
+sanity-multitime-app/
 ├── src/
 │   ├── app/                          # Next.js App Router
 │   │   ├── admin/                    # Admin routes

@@ -1,5 +1,5 @@
 {
-  "name": "sanity-mdhourlog-app",
+  "name": "sanity-multitime-app",
   "version": "1.0.0",
   "description": "Harvest-like time tracking and project management application built with Sanity CMS and Next.js",
   "private": true,
@@ -15,6 +15,11 @@
     "import-users": "node scripts/import-users.js",
     "import-projects": "node scripts/import-projects.js",
     "import-time-entries": "node scripts/import-time-entries.js",
+    "import-timesheets": "node scripts/import-timesheets.js",
+    "migrate-to-timesheets": "node scripts/migrate-to-timesheets.js",
+    "publish-timesheets": "node scripts/publish-timesheets.js",
+    "update-timesheet-status": "node scripts/update-timesheet-status.js",
+    "recalculate-project-hours": "node scripts/recalculate-project-timesheet-hours.js",
     "dry-run-import": "node scripts/dry-run-import.js",
     "assign-project-members": "node scripts/assign-project-members.js",
     "fix-project-assigned-users": "node scripts/fix-project-assigned-users.js",
