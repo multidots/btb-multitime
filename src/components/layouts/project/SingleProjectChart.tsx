@@ -1,17 +1,41 @@
 import React, { useMemo, useState } from 'react'
 import { FiCheckSquare, FiUsers, FiTrendingUp, FiBarChart } from 'react-icons/fi'
-import { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, ReferenceArea, Cell } from 'recharts'
+import { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, ReferenceLine, ReferenceArea, Cell } from 'recharts'
 import { format, startOfWeek, endOfWeek, addWeeks, subWeeks, eachWeekOfInterval, getWeek, getYear } from 'date-fns'
 import { formatSimpleTime } from '@/lib/time'
 import { Project } from '@/types'
 
-export default function SingleProjectChart({ project }: { project: Project }) {
+interface TimesheetEntry {
+    user: {
+        _id: string
+        firstName: string
+        lastName: string
+    }
+    status: string
+    entries: Array<{
+        _key: string
+        date: string
+        hours: number
+        isBillable: boolean
+        notes?: string
+        taskId?: string
+    }>
+}
+
+interface SingleProjectChartProps {
+    project: Project
+    timesheetEntries?: TimesheetEntry[] | null
+}
+
+export default function SingleProjectChart({ project, timesheetEntries }: SingleProjectChartProps) {
     const [weekOffset, setWeekOffset] = useState(0)
 	const [chartView, setChartView] = useState<'progress' | 'hours'>('progress')
 	// Process time entries for chart - MUST be before early returns
-	// console.log('project', project)
 	const chartData = useMemo(() => {
-		if (!project?.timeEntries || !Array.isArray(project.timeEntries) || project.timeEntries.length === 0) return []
+		// const hasTimeEntries = project?.timeEntries && Array.isArray(project.timeEntries) && project.timeEntries.length > 0
+		const hasTimesheetEntries = timesheetEntries && Array.isArray(timesheetEntries) && timesheetEntries.length > 0
+		
+		if (!hasTimesheetEntries) return []
 	
 		const now = new Date()
 		const currentWeekStart = startOfWeek(now, { weekStartsOn: 1 })
@@ -28,25 +52,45 @@ export default function SingleProjectChart({ project }: { project: Project }) {
 			{ weekStartsOn: 1 }
 		)
 		
+		// Flatten all timesheet entries
+		const allTimesheetEntries = timesheetEntries?.flatMap(ts => 
+			ts.entries?.map(entry => ({
+				...entry,
+				status: ts.status
+			})) || []
+		) || []
+		
 		// Group time entries by week
 		const weeklyData = weeks.map(weekStart => {
 			const weekEnd = endOfWeek(weekStart, { weekStartsOn: 1 })
 			const weekKey = format(weekStart, 'yyyy-MM-dd')
 			const monthLabel = format(weekStart, 'MMM yyyy')
 			
-			const entriesInWeek = project.timeEntries?.filter((entry) => {
+			// Time entries for this week - commented out
+			// const entriesInWeek = project.timeEntries?.filter((entry) => {
+			// 	if (!entry.date) return false
+			// 	const entryDate = new Date(entry.date)
+			// 	return entryDate >= weekStart && entryDate <= weekEnd
+			// }) || []
+			// const totalHours = entriesInWeek.reduce((sum: number, entry) => sum + (entry.hours || 0), 0)
+			// const billableHours = entriesInWeek.reduce((sum: number, entry) => {
+			// 	const isBillable = entry.task?.isBillable !== false
+			// 	return sum + (isBillable ? (entry.hours || 0) : 0)
+			// }, 0)
+			// const nonBillableHours = Math.round((totalHours - billableHours) * 100) / 100
+			
+			// Timesheet entries for this week
+			const timesheetEntriesInWeek = allTimesheetEntries.filter((entry) => {
 				if (!entry.date) return false
 				const entryDate = new Date(entry.date)
 				return entryDate >= weekStart && entryDate <= weekEnd
-			}) || []
-		  
-			const totalHours = entriesInWeek.reduce((sum: number, entry) => sum + (entry.hours || 0), 0)
-			const billableHours = entriesInWeek.reduce((sum: number, entry) => {
-				// Check if task is billable (task is billable by default if not specified)
-				const isBillable = entry.task?.isBillable !== false
-				return sum + (isBillable ? (entry.hours || 0) : 0)
+			})
+			
+			const timesheetTotalHours = timesheetEntriesInWeek.reduce((sum: number, entry) => sum + (entry.hours || 0), 0)
+			const timesheetBillableHours = timesheetEntriesInWeek.reduce((sum: number, entry) => {
+				return sum + (entry.isBillable ? (entry.hours || 0) : 0)
 			}, 0)
-			const nonBillableHours = Math.round((totalHours - billableHours) * 100) / 100
+			const timesheetNonBillableHours = Math.round((timesheetTotalHours - timesheetBillableHours) * 100) / 100
 			
 			// Show month label for all weeks (not just first week of month)
 			// Format: "MMM yyyy" for all weeks
@@ -61,9 +105,14 @@ export default function SingleProjectChart({ project }: { project: Project }) {
 				weekEnd: weekEnd,
 				label: weekLabel,
 				monthLabel: monthLabel,
-				hours: Math.round(totalHours * 100) / 100,
-				billableHours: Math.round(billableHours * 100) / 100,
-				nonBillableHours: nonBillableHours,
+				// Time entries - commented out
+				hours: 0,
+				billableHours: 0,
+				nonBillableHours: 0,
+				// Timesheet entries
+				timesheetHours: Math.round(timesheetTotalHours * 100) / 100,
+				timesheetBillableHours: Math.round(timesheetBillableHours * 100) / 100,
+				timesheetNonBillableHours: timesheetNonBillableHours,
 				weekNumber: weekNumber,
 				year: year,
 				isCurrentWeek: weekStart.getTime() === currentWeekStart.getTime(),
@@ -71,18 +120,21 @@ export default function SingleProjectChart({ project }: { project: Project }) {
 			}
 		})
 		return weeklyData
-	}, [project?.timeEntries, weekOffset])
+	}, [timesheetEntries, weekOffset])
 
 	// Calculate cumulative progress data for line chart
 	const progressData = useMemo(() => {
 		if (!chartData || chartData.length === 0) return []
 		
-		let cumulativeHours = 0
+		// let cumulativeHours = 0
+		let cumulativeTimesheetHours = 0
 		return chartData.map((week, index) => {
-			cumulativeHours += week.hours
+			// cumulativeHours += week.hours
+			cumulativeTimesheetHours += week.timesheetHours
 			return {
 				...week,
-				cumulativeHours: Math.round(cumulativeHours * 100) / 100
+				cumulativeHours: 0,
+				cumulativeTimesheetHours: Math.round(cumulativeTimesheetHours * 100) / 100
 			}
 		})
 	}, [chartData])
@@ -92,26 +144,30 @@ export default function SingleProjectChart({ project }: { project: Project }) {
 	
 	// Calculate the earliest and latest week with data
 	const weeksWithData = useMemo(() => {
-		if (!project?.timeEntries || !Array.isArray(project.timeEntries) || project.timeEntries.length === 0) {
-			return { earliest: null, latest: null }
-		}
+		// Time entry dates - commented out
+		// const timeEntryDates = (project?.timeEntries || [])
+		// 	.map(entry => entry.date ? new Date(entry.date) : null)
+		// 	.filter(date => date !== null) as Date[]
 		
-		const dates = project.timeEntries
+		const timesheetDates = (timesheetEntries || [])
+			.flatMap(ts => ts.entries || [])
 			.map(entry => entry.date ? new Date(entry.date) : null)
 			.filter(date => date !== null) as Date[]
 		
-		if (dates.length === 0) {
+		const allDates = [...timesheetDates]
+		
+		if (allDates.length === 0) {
 			return { earliest: null, latest: null }
 		}
 		
-		const earliestDate = new Date(Math.min(...dates.map(d => d.getTime())))
-		const latestDate = new Date(Math.max(...dates.map(d => d.getTime())))
+		const earliestDate = new Date(Math.min(...allDates.map(d => d.getTime())))
+		const latestDate = new Date(Math.max(...allDates.map(d => d.getTime())))
 		
 		const earliestWeek = startOfWeek(earliestDate, { weekStartsOn: 1 })
 		const latestWeek = startOfWeek(latestDate, { weekStartsOn: 1 })
 		
 		return { earliest: earliestWeek, latest: latestWeek }
-	}, [project?.timeEntries])
+	}, [timesheetEntries])
 	
 	// Calculate navigation limits based on data and current view
 	const canGoBack = useMemo(() => {
@@ -127,10 +183,6 @@ export default function SingleProjectChart({ project }: { project: Project }) {
 		// Allow going forward if we haven't reached the latest week (current week or future)
 		return weekOffset < 0
 	}, [weeksWithData.latest, currentWeekStart, weekOffset])
-
-	// console.log('week offset', weekOffset)
-	// console.log('weeks with data', weeksWithData)
-	// console.log('canGoBack', canGoBack, 'canGoForward', canGoForward)
 
 	const handlePreviousWeek = () => {
 		// Go back in time = decrease weekOffset (more negative)
@@ -234,9 +286,9 @@ export default function SingleProjectChart({ project }: { project: Project }) {
 								const currentWeekData = chartData.find(d => d.isCurrentWeek)
 								if (currentWeekData) {
 									const currentWeekIndex = chartData.findIndex(d => d.isCurrentWeek)
-									// Get the Y-axis domain max value - use a large multiplier to ensure full coverage
-									const maxHours = Math.max(...chartData.map(d => d.hours), 0)
-									const yMax = maxHours > 0 ? maxHours * 2 : 20 // Use a larger multiplier
+									// Get the Y-axis domain max value (timesheet hours only - time entries commented out)
+									const maxHours = Math.max(...chartData.map(d => d.timesheetHours), 0)
+									const yMax = maxHours > 0 ? maxHours * 2 : 20
 									
 									// ReferenceArea with index-based positioning for categorical X-axis
 									// Place it after YAxis but before bars for proper layering
@@ -264,11 +316,11 @@ export default function SingleProjectChart({ project }: { project: Project }) {
 							content={({ active, payload }) => {
 								if (active && payload && payload.length) {
 									const data = payload[0].payload
-									const billablePercentage = data.hours > 0 
-										? Math.round((data.billableHours / data.hours) * 100) 
-										: 0
-									const nonBillablePercentage = data.hours > 0 
-										? Math.round((data.nonBillableHours / data.hours) * 100) 
+									// Time entry percentages - commented out
+									// const billablePercentage = data.hours > 0 ? Math.round((data.billableHours / data.hours) * 100) : 0
+									// const nonBillablePercentage = data.hours > 0 ? Math.round((data.nonBillableHours / data.hours) * 100) : 0
+									const timesheetBillablePercentage = data.timesheetHours > 0 
+										? Math.round((data.timesheetBillableHours / data.timesheetHours) * 100) 
 										: 0
 									const dateRange = `${format(data.weekStart, 'd')} - ${format(data.weekEnd, 'd MMM yyyy')}`
 									const weekLabel = `Week ${data.weekNumber}`
@@ -278,10 +330,19 @@ export default function SingleProjectChart({ project }: { project: Project }) {
 											<div className="text-sm font-medium text-gray-900 mb-2">
 												{dateRange} ({weekLabel})
 											</div>
-											<div className="text-sm text-gray-600 space-y-1">
-												<div>Total hours: <span className="font-medium text-gray-900">{formatSimpleTime(data.hours)}</span></div>
-												<div>Billable hours: <span className="font-medium text-gray-900">{formatSimpleTime(data.billableHours)} ({billablePercentage}%)</span></div>
-												<div>Non-billable hours: <span className="font-medium text-gray-900">{formatSimpleTime(data.nonBillableHours)} ({nonBillablePercentage}%)</span></div>
+											<div className="text-sm text-gray-600 space-y-2">
+												{/* Time Entries section - commented out
+												<div className="border-b pb-2">
+													<div className="font-medium text-gray-700 mb-1">Time Entries</div>
+													<div>Total: <span className="font-medium text-gray-900">{formatSimpleTime(data.hours)}</span></div>
+													<div>Billable: <span className="font-medium text-gray-900">{formatSimpleTime(data.billableHours)} ({billablePercentage}%)</span></div>
+												</div>
+												*/}
+												<div>
+													<div className="font-medium text-gray-700 mb-1">Hours</div>
+													<div>Total: <span className="font-medium text-gray-900">{formatSimpleTime(data.timesheetHours)}</span></div>
+													<div>Billable: <span className="font-medium text-gray-900">{formatSimpleTime(data.timesheetBillableHours)} ({timesheetBillablePercentage}%)</span></div>
+												</div>
 											</div>
 										</div>
 									)
@@ -292,17 +353,18 @@ export default function SingleProjectChart({ project }: { project: Project }) {
 							{weekOffset === 0 && chartData.find(d => d.isCurrentWeek) && (
 							<ReferenceLine
 								x={chartData.findIndex(d => d.isCurrentWeek)}
-								stroke="#3b82f6"
+								stroke="#374151"
 								strokeDasharray="3 3"
-								label={{ value: 'This week', position: 'top', fill: '#3b82f6', fontSize: 12 }}
+								label={{ value: 'This week', position: 'top', fill: '#374151', fontSize: 12 }}
 							/>
 							)}
-							{/* Stacked bars: Billable hours (gray #374151) on bottom, Non-billable hours (light gray) on top */}
+							{/* Time entry bars - commented out
 							<Bar
 							dataKey="billableHours"
-							stackId="hours"
+							stackId="timeEntries"
 							fill="#374151"
-							radius={[4, 4, 0, 0]}
+							name="Time Entries (Billable)"
+							radius={[0, 0, 0, 0]}
 							isAnimationActive={false}
 							>
 								{chartData.map((entry, index) => (
@@ -314,8 +376,9 @@ export default function SingleProjectChart({ project }: { project: Project }) {
 							</Bar>
 							<Bar
 							dataKey="nonBillableHours"
-							stackId="hours"
+							stackId="timeEntries"
 							fill="#9ca3af"
+							name="Time Entries (Non-Billable)"
 							radius={[4, 4, 0, 0]}
 							isAnimationActive={false}
 							>
@@ -326,11 +389,44 @@ export default function SingleProjectChart({ project }: { project: Project }) {
 									/>
 								))}
 							</Bar>
+							*/}
+							{/* Timesheet bars: match time entry colors (gray) */}
+							<Bar
+							dataKey="timesheetBillableHours"
+							stackId="timesheets"
+							fill="#374151"
+							name="Billable"
+							radius={[0, 0, 0, 0]}
+							isAnimationActive={false}
+							>
+								{chartData.map((entry, index) => (
+									<Cell
+										key={`ts-billable-cell-${index}`}
+										fill="#374151"
+									/>
+								))}
+							</Bar>
+							<Bar
+							dataKey="timesheetNonBillableHours"
+							stackId="timesheets"
+							fill="#9ca3af"
+							name="Non-Billable"
+							radius={[4, 4, 0, 0]}
+							isAnimationActive={false}
+							>
+								{chartData.map((entry, index) => (
+									<Cell
+										key={`ts-nonbillable-cell-${index}`}
+										fill="#9ca3af"
+									/>
+								))}
+							</Bar>
+							<Legend />
 						</BarChart>
 						</ResponsiveContainer>
 					) : (
 						<div className="flex items-center justify-center h-full text-gray-500">
-						<p>No time entries data available</p>
+						<p>No timesheet data available</p>
 						</div>
 					)}
 					</div>
@@ -398,33 +494,61 @@ export default function SingleProjectChart({ project }: { project: Project }) {
 								borderRadius: '6px',
 								padding: '8px'
 							}}
-							formatter={(value: number) => [formatSimpleTime(value), 'Cumulative Hours']}
-							labelFormatter={(label) => {
-								// Label now always contains the month (MMM yyyy format)
-								return label ? `Week of ${label}` : 'Week'
+							content={({ active, payload }) => {
+								if (active && payload && payload.length) {
+									const data = payload[0].payload
+									const dateRange = `${format(data.weekStart, 'd')} - ${format(data.weekEnd, 'd MMM yyyy')}`
+									const weekLabel = `Week ${data.weekNumber}`
+									
+									return (
+										<div className="bg-white border border-gray-200 rounded-lg p-3 shadow-lg">
+											<div className="text-sm font-medium text-gray-900 mb-2">
+												{dateRange} ({weekLabel})
+											</div>
+											<div className="text-sm text-gray-600 space-y-1">
+												{/* <div>Time Entries: <span className="font-medium text-gray-900">{formatSimpleTime(data.cumulativeHours)}</span></div> */}
+												<div>Hours: <span className="font-medium text-gray-900">{formatSimpleTime(data.cumulativeTimesheetHours)}</span></div>
+											</div>
+										</div>
+									)
+								}
+								return null
 							}}
 							/>
 							{weekOffset === 0 && progressData.find(d => d.isCurrentWeek) && (
 							<ReferenceLine
 								x={progressData.findIndex(d => d.isCurrentWeek)}
-								stroke="#3b82f6"
+								stroke="#374151"
 								strokeDasharray="3 3"
-								label={{ value: 'This week', position: 'top', fill: '#3b82f6', fontSize: 12 }}
+								label={{ value: 'This week', position: 'top', fill: '#374151', fontSize: 12 }}
 							/>
 							)}
+							{/* Time Entries line - commented out
 							<Line
 							type="monotone"
 							dataKey="cumulativeHours"
 							stroke="#374151"
 							strokeWidth={2}
+							name="Time Entries"
 							dot={{ fill: '#374151', r: 4 }}
 							activeDot={{ r: 6 }}
 							/>
+							*/}
+							<Line
+							type="monotone"
+							dataKey="cumulativeTimesheetHours"
+							stroke="#374151"
+							strokeWidth={2}
+							name="Hours"
+							dot={{ fill: '#374151', r: 4 }}
+							activeDot={{ r: 6 }}
+							/>
+							<Legend />
 						</LineChart>
 						</ResponsiveContainer>
 					) : (
 						<div className="flex items-center justify-center h-full text-gray-500">
-						<p>No time entries data available</p>
+						<p>No timesheet data available</p>
 						</div>
 					)}
 					</div>

@@ -2,13 +2,26 @@
 
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import { useSearchParams } from 'next/navigation'
-import { FiX, FiChevronDown, FiChevronUp, FiPrinter, FiFilter } from 'react-icons/fi'
+import { FiX, FiChevronDown, FiChevronUp, FiChevronLeft, FiChevronRight, FiPrinter, FiFilter } from 'react-icons/fi'
 import { sanityFetch } from '@/lib/sanity'
 import { format, startOfWeek, endOfWeek, startOfMonth, endOfMonth, startOfYear, endOfYear } from 'date-fns'
 import * as XLSX from 'xlsx'
 import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
 import { SaveReport } from '../time/SaveReport'
+import {
+	TIMESHEET_REPORT_QUERY,
+	TIMESHEET_REPORT_QUERY_CURSOR,
+	TIMESHEET_REPORT_COUNT_QUERY,
+	TIMESHEET_REPORT_TOTAL_HOURS_QUERY,
+	TIMESHEET_REPORT_QUERY_FOR_CLIENT,
+	TIMESHEET_REPORT_QUERY_FOR_PROJECT,
+	TIMESHEET_REPORT_QUERY_FOR_PROJECTS,
+	TIMESHEET_REPORT_QUERY_FOR_TASKS,
+	USER_TIMESHEET_REPORT_QUERY,
+	MANAGER_TIMESHEET_REPORT_QUERY
+} from '@/lib/queries'
+import { formatSimpleTime, hoursToDecimal, formatDecimalHours } from '@/lib/time'
 
 interface FilterTag {
 	id: string
@@ -25,12 +38,14 @@ interface TimeEntry {
 	task: { _id: string; name: string }
 	user: { _id: string; firstName: string; lastName: string }
 	notes?: string
+	timesheetHours?: number
 }
 
 interface GroupedEntries {
 	[key: string]: {
 		entries: TimeEntry[]
 		totalHours: number
+		totalTimesheetHours: number
 		label: string
 		sortKey: string
 	}
@@ -83,16 +98,31 @@ export default function DetailedTimeReport({ userId, userRole = 'admin' }: Detai
 
 	// Report results
 	const [reportData, setReportData] = useState<TimeEntry[]>([])
+	const [timesheetEntries, setTimesheetEntries] = useState<any[]>([])
 	const [showReport, setShowReport] = useState(false)
 	const [isLoadingReport, setIsLoadingReport] = useState(false)
 	const [groupBy, setGroupBy] = useState<'date' | 'client' | 'project' | 'task' | 'person'>('date')
 	const [activeProjectsOnly, setActiveProjectsOnly] = useState(false)
 	const [showExportDropdown, setShowExportDropdown] = useState(false)
+	const [isExporting, setIsExporting] = useState(false)
 	const exportRef = useRef<HTMLDivElement>(null)
 	
 	// Track if URL params have been loaded
 	const [urlParamsLoaded, setUrlParamsLoaded] = useState(false)
 	const [shouldAutoRun, setShouldAutoRun] = useState(false)
+	const hasAutoRunRef = useRef(false)
+
+	// Pagination for "All" timeframe (cursor-based to avoid API slice limits)
+	const REPORT_PAGE_SIZE = 100
+	const [reportPage, setReportPage] = useState(0)
+	const [reportTotalPages, setReportTotalPages] = useState<number | null>(null)
+	const [reportTotalHours, setReportTotalHours] = useState<number | null>(null)
+	const [isPaginatedReport, setIsPaginatedReport] = useState(false)
+	const reportPageCursorsRef = useRef<Record<number, { weekStart: string; _id: string } | null>>({ 0: null })
+	
+	// Collapsible groups state (for UI only - doesn't affect export)
+	const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set())
+	const previousGroupKeysRef = useRef<string>('')
 	
 	// Filter visibility toggle (hide filters when showing results)
 	// Initialize to false if URL params exist (will auto-run report)
@@ -347,6 +377,10 @@ export default function DetailedTimeReport({ userId, userRole = 'admin' }: Detai
 			case 'year':
 				return { start: format(startOfYear(now), 'yyyy-MM-dd'), end: format(endOfYear(now), 'yyyy-MM-dd') }
 			case 'custom':
+				// Validate custom dates - if not set, use current week as fallback
+				if (!customStartDate || !customEndDate) {
+					return { start: format(startOfWeek(now, { weekStartsOn: 1 }), 'yyyy-MM-dd'), end: format(endOfWeek(now, { weekStartsOn: 1 }), 'yyyy-MM-dd') }
+				}
 				return { start: customStartDate, end: customEndDate }
 			case 'all':
 			default:
@@ -357,6 +391,17 @@ export default function DetailedTimeReport({ userId, userRole = 'admin' }: Detai
 	// Get current date range for SaveReport
 	const currentDateRange = useMemo(() => getDateRange(), [getDateRange])
 
+	// Normalize weekStart for cursor (GROQ expects comparable string, e.g. YYYY-MM-DD)
+	const normalizeCursorWeekStart = useCallback((weekStart: unknown): string => {
+		if (weekStart == null) return ''
+		if (typeof weekStart === 'string') {
+			const match = weekStart.match(/^(\d{4}-\d{2}-\d{2})/)
+			return match ? match[1] : weekStart
+		}
+		if (weekStart instanceof Date) return format(weekStart, 'yyyy-MM-dd')
+		return String(weekStart)
+	}, [])
+
 	// Run report function
 	// Run report based on current filters (used for auto-run from URL params)
 	const runReport = useCallback(async () => {
@@ -366,67 +411,171 @@ export default function DetailedTimeReport({ userId, userRole = 'admin' }: Detai
 		
 		try {
 			const { start, end } = getDateRange()
-			
-			let clientFilter = ''
-			let projectFilter = ''
-			let taskFilter = ''
-			
-			if (selectedClients.length > 0) {
-				const clientIds = selectedClients.map(c => `"${c.id}"`).join(', ')
-				clientFilter = `&& project->client._ref in [${clientIds}]`
-			}
-			
-			if (selectedProjects.length > 0) {
-				const projectIds = selectedProjects.map(p => `"${p.id}"`).join(', ')
-				projectFilter = `&& project._ref in [${projectIds}]`
-			}
-			
-			if (selectedTasks.length > 0) {
-				const taskIds = selectedTasks.map(t => `"${t.id}"`).join(', ')
-				taskFilter = `&& task._ref in [${taskIds}]`
-			}
-			
-			const activeFilter = activeProjectsOnly ? '&& project->isActive == true' : ''
-			console.log('userRole', userRole);
-			console.log('userId', userId);
-			// Build user filter based on role
-			let userFilter = ''
-			if (userRole === 'user' && userId) {
-				// Regular users only see their own entries
-				userFilter = `&& user._ref == "${userId}"`
-			} else if (userRole === 'manager' && teamMemberIds.length > 0) {
-				// Managers see their team members' entries (including their own)
-				const memberIdsStr = teamMemberIds.map(id => `"${id}"`).join(', ')
-				userFilter = `&& user._ref in [${memberIdsStr}]`
-			}
-			// Admin: no user filter, sees all entries
-			// but if admin wants to check individual user, then add the user filter
-			
-			// get user id from url
-			const urlUserId = searchParams.getAll('user[]').filter(Boolean) || ['unknown']	
-			if (userRole === 'admin' && urlUserId.length > 0) {
-				userFilter = `&& user._ref in [${urlUserId.map(id => `"${id}"`).join(', ')}]`
+
+			// get user id from url (for admin filter)
+			const urlUserId = searchParams.getAll('user[]').filter(Boolean) || ['unknown']
+
+			// Check if we should use pagination (timeframe === 'all' and no filters applied)
+			const shouldUsePagination = timeframe === 'all' && 
+				selectedClients.length === 0 && 
+				selectedProjects.length === 0 && 
+				selectedTasks.length === 0 &&
+				!(userRole === 'user' && userId) &&
+				!(userRole === 'manager' && teamMemberIds.length > 0) &&
+				!(userRole === 'admin' && urlUserId.length > 0 && urlUserId[0] !== 'unknown')
+
+			if (shouldUsePagination) {
+				// Enable pagination for "All" timeframe
+				setIsPaginatedReport(true)
+				setReportPage(0)
+				setReportTotalPages(null)
+				setReportTotalHours(null)
+				reportPageCursorsRef.current = { 0: null }
+
+				// Fetch total count and total hours in parallel
+				const [countResult, totalHoursResult] = await Promise.all([
+					sanityFetch<number>({
+						query: TIMESHEET_REPORT_COUNT_QUERY,
+						params: { startDate: start, endDate: end }
+					}),
+					sanityFetch<{ totalHours: number }>({
+						query: TIMESHEET_REPORT_TOTAL_HOURS_QUERY,
+						params: { startDate: start, endDate: end }
+					})
+				])
+
+				const totalCount = countResult || 0
+				const totalPages = Math.ceil(totalCount / REPORT_PAGE_SIZE)
+				setReportTotalPages(totalPages)
+				setReportTotalHours(totalHoursResult?.totalHours ?? null)
+
+				// Load first page using cursor-based pagination
+				const firstPageParams = {
+					startDate: start,
+					endDate: end,
+					pageSize: REPORT_PAGE_SIZE,
+					lastWeekStart: null,
+					lastId: null
+				}
+				const firstPageRaw = await sanityFetch<any[]>({
+					query: TIMESHEET_REPORT_QUERY_CURSOR,
+					params: firstPageParams
+				})
+				const firstPage = firstPageRaw || []
+				setTimesheetEntries(firstPage)
+				setReportData([])
+
+				// Store cursor for next page if we got a full page
+				if (firstPage.length > 0) {
+					const last = firstPage[firstPage.length - 1]
+					reportPageCursorsRef.current[1] = {
+						weekStart: normalizeCursorWeekStart(last.weekStart),
+						_id: last._id
+					}
+				}
+				return
 			}
 
-			const query = `
-				*[_type == "timeEntry" && !(_id in path("drafts.**")) && date >= $startDate && date <= $endDate ${clientFilter} ${projectFilter} ${taskFilter} ${activeFilter} ${userFilter}] | order(date desc) {
-					_id,
-					date,
-					hours,
-					notes,
-					"client": project->client->{_id, name},
-					"project": project->{_id, name},
-					"task": task->{_id, name},
-					"user": user->{_id, firstName, lastName}
-				}
-			`
-			
-			const entries = await sanityFetch<TimeEntry[]>({ 
-				query, 
-				params: { startDate: start, endDate: end } 
+			// Disable pagination for non-"All" timeframes
+			setIsPaginatedReport(false)
+			setReportPage(0)
+			setReportTotalPages(null)
+			setReportTotalHours(null)
+
+			// Build timesheet query: single-user view always uses user's timesheets (then filter by client/project/task)
+			let timesheetQuery = ''
+			let timesheetParams: any = { startDate: start, endDate: end }
+			const isSingleUserView = userRole === 'user' && userId
+
+			if (isSingleUserView) {
+				// Dashboard single-user: always fetch this user's timesheets only; filter by client/project/task below
+				timesheetQuery = USER_TIMESHEET_REPORT_QUERY
+				timesheetParams.userId = userId
+			} else if (selectedProjects.length > 0) {
+				// Prefer project filter when projects are selected (so 1 client + 1 project shows only that project)
+				const projectIds = selectedProjects.map(p => p.id)
+				timesheetQuery = TIMESHEET_REPORT_QUERY_FOR_PROJECTS
+				timesheetParams.projectIds = projectIds
+			} else if (selectedTasks.length > 0) {
+				// Prefer task filter when tasks are selected (so 1 client + 1 task shows only that task)
+				const taskIds = selectedTasks.map(t => t.id)
+				timesheetQuery = TIMESHEET_REPORT_QUERY_FOR_TASKS
+				timesheetParams.taskIds = taskIds
+			} else if (selectedClients.length > 0) {
+				const clientIds = selectedClients.map(c => c.id)
+				timesheetQuery = TIMESHEET_REPORT_QUERY_FOR_CLIENT
+				timesheetParams.clientId = clientIds[0] // Use first client for now
+			} else if (userRole === 'manager' && teamMemberIds.length > 0) {
+				timesheetQuery = MANAGER_TIMESHEET_REPORT_QUERY
+				timesheetParams.managerId = userId
+			} else if (userRole === 'admin' && urlUserId.length > 0 && urlUserId[0] !== 'unknown') {
+				timesheetQuery = USER_TIMESHEET_REPORT_QUERY
+				timesheetParams.userId = urlUserId[0]
+			} else {
+				timesheetQuery = TIMESHEET_REPORT_QUERY
+			}
+
+			const timesheetsRaw = await sanityFetch<any[]>({
+				query: timesheetQuery,
+				params: timesheetParams
 			})
+
+			let timesheets = timesheetsRaw || []
+
+			// Single-user view with client/project/task filters: keep only entries matching those filters
+			if (isSingleUserView && timesheets.length > 0 && (selectedClients.length > 0 || selectedProjects.length > 0 || selectedTasks.length > 0)) {
+				const clientIds = new Set(selectedClients.map(c => c.id))
+				const projectIds = new Set(selectedProjects.map(p => p.id))
+				const taskIds = new Set(selectedTasks.map(t => t.id))
+				timesheets = timesheets.map((ts: any) => {
+					if (!ts.entries || !Array.isArray(ts.entries)) return { ...ts, entries: [] }
+					const filteredEntries = ts.entries.filter((e: any) => {
+						if (clientIds.size > 0 && (!e.project?.client?._id || !clientIds.has(e.project.client._id))) return false
+						if (projectIds.size > 0 && (!e.project?._id || !projectIds.has(e.project._id))) return false
+						if (taskIds.size > 0 && (!e.task?._id || !taskIds.has(e.task._id))) return false
+						return true
+					})
+					return { ...ts, entries: filteredEntries }
+				}).filter((ts: any) => (ts.entries?.length ?? 0) > 0)
+			}
+
+			// When task filter was used with client filter (e.g. client + task in URL), restrict to selected clients only
+			if (timesheets.length > 0 && selectedTasks.length > 0 && selectedClients.length > 0) {
+				const clientIds = new Set(selectedClients.map(c => c.id))
+				timesheets = timesheets.map((ts: any) => {
+					if (!ts.entries || !Array.isArray(ts.entries)) return { ...ts, entries: [] }
+					const filteredEntries = ts.entries.filter((e: any) =>
+						e.project?.client?._id && clientIds.has(e.project.client._id)
+					)
+					return { ...ts, entries: filteredEntries }
+				}).filter((ts: any) => (ts.entries?.length ?? 0) > 0)
+			}
+
+			// When task filter was used with project filter (e.g. project + task in URL), restrict to selected tasks only
+			// This ensures task filtering works even when projects are selected (since projects are prioritized in query selection)
+			if (timesheets.length > 0 && selectedTasks.length > 0 && selectedProjects.length > 0) {
+				const taskIds = new Set(selectedTasks.map(t => t.id))
+				timesheets = timesheets.map((ts: any) => {
+					if (!ts.entries || !Array.isArray(ts.entries)) return { ...ts, entries: [] }
+					const filteredEntries = ts.entries.filter((e: any) =>
+						e.task?._id && taskIds.has(e.task._id)
+					)
+					return { ...ts, entries: filteredEntries }
+				}).filter((ts: any) => (ts.entries?.length ?? 0) > 0)
+			}
+
+			// When user[] is in URL (admin filtering by specific user(s)), show only those users' timesheets
+			const validUrlUserIds = urlUserId.filter((id): id is string => !!id && id !== 'unknown')
+			if (timesheets.length > 0 && validUrlUserIds.length > 0) {
+				const urlUserSet = new Set(validUrlUserIds)
+				timesheets = timesheets.filter((ts: any) => {
+					const tsUserId = ts.user?._id
+					return tsUserId && urlUserSet.has(tsUserId)
+				})
+			}
 			
-			setReportData(entries || [])
+			setReportData([])
+			setTimesheetEntries(timesheets)
 		} catch (error) {
 			console.error('Error running report:', error)
 		} finally {
@@ -435,56 +584,259 @@ export default function DetailedTimeReport({ userId, userRole = 'admin' }: Detai
 	// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [selectedClients, selectedProjects, selectedTasks, activeProjectsOnly, timeframe, customStartDate, customEndDate, userId, userRole, teamMemberIds])
 	
-	// Auto-run report if URL params were loaded
+	// Auto-run report if URL params were loaded (ref prevents double run in Strict Mode)
 	useEffect(() => {
-		if (shouldAutoRun && !isLoading) {
+		if (shouldAutoRun && !isLoading && !hasAutoRunRef.current) {
+			hasAutoRunRef.current = true
 			setShouldAutoRun(false)
 			runReport()
 		}
 	}, [shouldAutoRun, isLoading, runReport])
 
+	// Load a page when "All" uses cursor-based pagination
+	const loadReportPage = useCallback(async (page: number) => {
+		setIsLoadingReport(true)
+		try {
+			const { start, end } = getDateRange()
+			const baseParams = { startDate: start, endDate: end, pageSize: REPORT_PAGE_SIZE }
+
+			// Build cursor chain if we're jumping to a page we haven't visited (e.g. page 5)
+			if (page > 0 && reportPageCursorsRef.current[page] === undefined) {
+				for (let p = 0; p < page; p++) {
+					const cur = reportPageCursorsRef.current[p] ?? null
+					const buildParams: Record<string, unknown> = {
+						...baseParams,
+						lastWeekStart: cur?.weekStart ?? null,
+						lastId: cur?._id ?? null
+					}
+					const raw = await sanityFetch<any[]>({
+						query: TIMESHEET_REPORT_QUERY_CURSOR,
+						params: buildParams
+					})
+					const arr = raw || []
+					if (arr.length > 0) {
+						const last = arr[arr.length - 1]
+						reportPageCursorsRef.current[p + 1] = { weekStart: normalizeCursorWeekStart(last.weekStart), _id: last._id }
+					}
+				}
+			}
+
+			const cursor = reportPageCursorsRef.current[page] ?? null
+			const params: Record<string, unknown> = {
+				...baseParams,
+				lastWeekStart: cursor?.weekStart ?? null,
+				lastId: cursor?._id ?? null
+			}
+			const timesheetsRaw = await sanityFetch<any[]>({
+				query: TIMESHEET_REPORT_QUERY_CURSOR,
+				params
+			})
+			const list = timesheetsRaw || []
+			// Page returned no data – last page with data is page-1; correct total and go back to that page
+			if (list.length === 0 && page > 0) {
+				// Only override total pages if we didn't get it from count (e.g. count query failed)
+				setReportTotalPages((prev) => (prev == null ? page : prev))
+				const prevCursor = reportPageCursorsRef.current[page - 1] ?? null
+				const prevParams: Record<string, unknown> = {
+					...baseParams,
+					lastWeekStart: prevCursor?.weekStart ?? null,
+					lastId: prevCursor?._id ?? null
+				}
+				const prevRaw = await sanityFetch<any[]>({
+					query: TIMESHEET_REPORT_QUERY_CURSOR,
+					params: prevParams
+				})
+				setTimesheetEntries(prevRaw || [])
+				setReportPage(page - 1)
+			} else {
+				setTimesheetEntries(list)
+				setReportPage(page)
+				if (list.length > 0) {
+					const last = list[list.length - 1]
+					reportPageCursorsRef.current[page + 1] = { weekStart: normalizeCursorWeekStart(last.weekStart), _id: last._id }
+				}
+				// Total pages is set from count on initial run; only override if this is the last page and we didn't have count
+				if (list.length < REPORT_PAGE_SIZE && reportTotalPages == null) {
+					setReportTotalPages(page + 1)
+				}
+			}
+		} catch (error) {
+			console.error('Error loading report page:', error)
+		} finally {
+			setIsLoadingReport(false)
+		}
+	// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [normalizeCursorWeekStart, reportTotalPages])
+
+	// Flatten timesheet entries and match to time entries
+	const reportDataWithTimesheets = useMemo(() => {
+		// Flatten timesheet entries
+		const flattenedTimesheetEntries: any[] = []
+		timesheetEntries.forEach(timesheet => {
+			if (timesheet.entries && Array.isArray(timesheet.entries)) {
+				timesheet.entries.forEach((entry: any) => {
+					flattenedTimesheetEntries.push({
+						...entry,
+						user: timesheet.user,
+					})
+				})
+			}
+		})
+		
+		// Helper function to normalize dates for comparison
+		const normalizeDate = (date: any): string | null => {
+			if (!date) return null
+			// If it's already a string in YYYY-MM-DD format, return it
+			if (typeof date === 'string') {
+				// Extract YYYY-MM-DD from various formats (e.g., "2024-01-15" or "2024-01-15T00:00:00.000Z")
+				const match = date.match(/(\d{4}-\d{2}-\d{2})/)
+				return match ? match[1] : null
+			}
+			// If it's a Date object, format it
+			if (date instanceof Date) {
+				return format(date, 'yyyy-MM-dd')
+			}
+			return null
+		}
+		
+		// Helper function to check if two entries match
+		const entriesMatch = (entry: TimeEntry, tsEntry: any): boolean => {
+			// Normalize dates for comparison
+			const entryDate = normalizeDate(entry.date)
+			const tsEntryDate = normalizeDate(tsEntry.date)
+			
+			// Compare dates (normalized to YYYY-MM-DD)
+			if (entryDate !== tsEntryDate) {
+				return false
+			}
+			
+			// Compare users
+			const entryUserId = entry.user?._id
+			const tsEntryUserId = tsEntry.user?._id
+			if (entryUserId !== tsEntryUserId) {
+				return false
+			}
+			
+			// Compare projects
+			const entryProjectId = entry.project?._id
+			const tsEntryProjectId = tsEntry.project?._id
+			if (entryProjectId !== tsEntryProjectId) {
+				return false
+			}
+			
+			// Compare tasks - handle null/undefined cases (both null/undefined should match)
+			const entryTaskId = entry.task?._id || null
+			const tsEntryTaskId = tsEntry.task?._id || null
+			if (entryTaskId !== tsEntryTaskId) {
+				return false
+			}
+			
+			return true
+		}
+		
+		// Track which timesheet entries have been matched to avoid double-counting
+		const matchedTimesheetEntryIndices = new Set<number>()
+		
+		// First, match timesheet entries to existing time entries
+		const matchedEntries = reportData.map(entry => {
+			// Find matching timesheet entries that haven't been matched yet (same date, user, project, task)
+			const matchingTimesheetEntries = flattenedTimesheetEntries
+				.map((tsEntry, index) => ({ tsEntry, index }))
+				.filter(({ tsEntry, index }) => 
+					!matchedTimesheetEntryIndices.has(index) && entriesMatch(entry, tsEntry)
+				)
+			
+			// Take the first unmatched timesheet entry and mark it as matched
+			const firstMatchingEntry = matchingTimesheetEntries[0]
+			if (firstMatchingEntry) {
+				matchedTimesheetEntryIndices.add(firstMatchingEntry.index)
+			}
+			
+			const timesheetHours = firstMatchingEntry 
+				? formatDecimalHours(hoursToDecimal(firstMatchingEntry.tsEntry.hours || 0))
+				: 0
+			// Prefer notes from timesheet when matched, then time entry
+			const notes = (firstMatchingEntry?.tsEntry?.notes ?? entry.notes) ?? ''
+			
+			return {
+				...entry,
+				notes,
+				timesheetHours: timesheetHours || 0
+			}
+		})
+		
+		// Second, add timesheet entries that don't have matching time entries (or weren't matched)
+		const unmatchedTimesheetEntries = flattenedTimesheetEntries
+			.map((tsEntry, index) => ({ tsEntry, index }))
+			.filter(({ tsEntry, index }) => {
+				// Include if not matched to any time entry AND not already matched in the first pass
+				return !matchedTimesheetEntryIndices.has(index) && 
+					!reportData.some(entry => entriesMatch(entry, tsEntry))
+			})
+			.map(({ tsEntry }) => tsEntry)
+		
+		// Convert unmatched timesheet entries to TimeEntry format
+		const timesheetOnlyEntries: TimeEntry[] = unmatchedTimesheetEntries.map(tsEntry => ({
+			_id: `timesheet-${tsEntry._key || Date.now()}-${Math.random()}`,
+			date: tsEntry.date,
+			hours: 0, // No time entry hours, only timesheet hours
+			client: tsEntry.project?.client || { _id: '', name: 'No client' },
+			project: tsEntry.project || { _id: '', name: 'No project' },
+			task: tsEntry.task || { _id: '', name: 'No task' },
+			user: tsEntry.user || { _id: '', firstName: '', lastName: '' },
+			notes: tsEntry.notes || '',
+			timesheetHours: hoursToDecimal(tsEntry.hours || 0)
+		}))
+		
+		// Combine matched entries with timesheet-only entries
+		return [...matchedEntries, ...timesheetOnlyEntries]
+	}, [reportData, timesheetEntries])
+	
 	// Group entries based on groupBy selection
-	const groupedData: GroupedEntries = reportData.reduce((acc, entry) => {
-		let key: string
-		let label: string
-		let sortKey: string
+	const groupedData: GroupedEntries = useMemo(() => {
+		return reportDataWithTimesheets.reduce((acc, entry) => {
+			let key: string
+			let label: string
+			let sortKey: string
 
-		switch (groupBy) {
-			case 'client':
-				key = entry.client?._id || 'no-client'
-				label = entry.client?.name || 'No client'
-				sortKey = label.toLowerCase()
-				break
-			case 'project':
-				key = entry.project?._id || 'no-project'
-				label = entry.project?.name || 'No project'
-				sortKey = label.toLowerCase()
-				break
-			case 'task':
-				key = entry.task?._id || 'no-task'
-				label = entry.task?.name || 'No task'
-				sortKey = label.toLowerCase()
-				break
-			case 'person':
-				key = entry.user?._id || 'unknown'
-				label = entry.user ? `${entry.user.firstName} ${entry.user.lastName}` : 'Unknown'
-				sortKey = label.toLowerCase()
-				break
-			case 'date':
-			default:
-				key = entry.date
-				label = format(new Date(entry.date), 'dd/MM/yyyy')
-				sortKey = entry.date // ISO date format sorts correctly
-				break
-		}
+			switch (groupBy) {
+				case 'client':
+					key = entry.client?._id || 'no-client'
+					label = entry.client?.name || 'No client'
+					sortKey = label.toLowerCase()
+					break
+				case 'project':
+					key = entry.project?._id || 'no-project'
+					label = entry.project?.name || 'No project'
+					sortKey = label.toLowerCase()
+					break
+				case 'task':
+					key = entry.task?._id || 'no-task'
+					label = entry.task?.name || 'No task'
+					sortKey = label.toLowerCase()
+					break
+				case 'person':
+					key = entry.user?._id || 'unknown'
+					label = entry.user ? `${entry.user.firstName} ${entry.user.lastName}` : 'Unknown'
+					sortKey = label.toLowerCase()
+					break
+				case 'date':
+				default:
+					key = entry.date
+					label = format(new Date(entry.date), 'dd/MM/yyyy')
+					sortKey = entry.date // ISO date format sorts correctly
+					break
+			}
 
-		if (!acc[key]) {
-			acc[key] = { entries: [], totalHours: 0, label, sortKey }
-		}
-		acc[key].entries.push(entry)
-		acc[key].totalHours += entry.hours
-		return acc
-	}, {} as GroupedEntries)
+			if (!acc[key]) {
+				acc[key] = { entries: [], totalHours: 0, totalTimesheetHours: 0, label, sortKey }
+			}
+			acc[key].entries.push(entry)
+			acc[key].totalHours += hoursToDecimal(entry.hours)
+			acc[key].totalTimesheetHours += hoursToDecimal(entry.timesheetHours || 0)
+			return acc
+		}, {} as GroupedEntries)
+	}, [reportDataWithTimesheets, groupBy])
 
 	// Sort grouped data
 	const sortedGroupedData = Object.entries(groupedData).sort(([, a], [, b]) => {
@@ -496,11 +848,45 @@ export default function DetailedTimeReport({ userId, userRole = 'admin' }: Detai
 		return a.sortKey.localeCompare(b.sortKey)
 	})
 
+	// Toggle group collapse/expand (UI only - doesn't affect data or exports)
+	const toggleGroup = useCallback((key: string) => {
+		setCollapsedGroups(prev => {
+			const next = new Set(prev)
+			if (next.has(key)) {
+				next.delete(key)
+			} else {
+				next.add(key)
+			}
+			return next
+		})
+	}, [])
+
+	// Collapse all groups whenever report data actually changes (including pagination)
+	// Use a ref to track group keys and only collapse when they actually change
+	useEffect(() => {
+		if (sortedGroupedData.length > 0) {
+			// Create a stable string representation of group keys
+			const currentGroupKeys = sortedGroupedData.map(([key]) => key).sort().join(',')
+			
+			// Only collapse if the group keys have actually changed (new data or new page)
+			if (currentGroupKeys !== previousGroupKeysRef.current) {
+				const allGroupKeys = new Set(sortedGroupedData.map(([key]) => key))
+				setCollapsedGroups(allGroupKeys)
+				previousGroupKeysRef.current = currentGroupKeys
+			}
+		} else {
+			// Clear collapsed groups when report data is cleared
+			setCollapsedGroups(new Set())
+			previousGroupKeysRef.current = ''
+		}
+	}, [sortedGroupedData])
+
 	// Calculate totals
-	const totalHours = reportData.reduce((sum, entry) => sum + entry.hours, 0)
-	const uniqueClients = [...new Set(reportData.map(e => e.client?._id).filter(Boolean))]
-	console.log('reportData', reportData);
-	console.log('uniqueClientsss', uniqueClients);
+	const totalHours = reportDataWithTimesheets.reduce((sum, entry) => sum + hoursToDecimal(entry.hours), 0)
+	const totalTimesheetHours = reportDataWithTimesheets.reduce((sum, entry) => sum + hoursToDecimal(entry.timesheetHours || 0), 0)
+	// When "All" is selected, show grand total across all pages; otherwise show current page/set total
+	const displayTotalHours = isPaginatedReport && reportTotalHours != null ? reportTotalHours : totalTimesheetHours
+	const uniqueClients = [...new Set(reportDataWithTimesheets.map(e => e.client?._id).filter(Boolean))]
 
 	// Click outside handler - clears invalid search text
 	useEffect(() => {
@@ -555,7 +941,7 @@ export default function DetailedTimeReport({ userId, userRole = 'admin' }: Detai
 		const { start, end } = getDateRange()
 		const dateRangeStr = `${format(new Date(start), 'dd-MM-yyyy')}_to_${format(new Date(end), 'dd-MM-yyyy')}`
 		
-		// Prepare flat data for export
+		// Prepare flat data for export (timesheet hours + notes)
 		const exportRows = sortedGroupedData.flatMap(([, { entries }]) =>
 			entries.map(entry => ({
 				Date: format(new Date(entry.date), 'dd/MM/yyyy'),
@@ -563,7 +949,8 @@ export default function DetailedTimeReport({ userId, userRole = 'admin' }: Detai
 				Project: entry.project?.name || 'No project',
 				Task: entry.task?.name || 'No task',
 				Person: entry.user ? `${entry.user.firstName} ${entry.user.lastName}` : 'Unknown',
-				Hours: entry.hours,
+				Hours: entry.timesheetHours || 0,
+				Notes: entry.notes || '',
 			}))
 		)
 		
@@ -571,34 +958,109 @@ export default function DetailedTimeReport({ userId, userRole = 'admin' }: Detai
 	// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [sortedGroupedData, timeframe, customStartDate, customEndDate])
 
-	const exportToCSV = useCallback(() => {
+	// Fetch all timesheet data for export when "All" is selected (paginated report)
+	const fetchAllDataForExport = useCallback(async (): Promise<{ exportRows: Array<{ Date: string; Client: string; Project: string; Task: string; Person: string; Hours: number; Notes: string }>; dateRangeStr: string }> => {
+		const { start, end } = getDateRange()
+		const dateRangeStr = `${format(new Date(start), 'dd-MM-yyyy')}_to_${format(new Date(end), 'dd-MM-yyyy')}`
+		const allTimesheets: any[] = []
+		let cursor: { weekStart: string; _id: string } | null = null
+		// eslint-disable-next-line no-constant-condition
+		while (true) {
+			const params: Record<string, unknown> = {
+				startDate: start,
+				endDate: end,
+				pageSize: REPORT_PAGE_SIZE,
+				lastWeekStart: cursor?.weekStart ?? null,
+				lastId: cursor?._id ?? null
+			}
+			const list = await sanityFetch<any[]>({
+				query: TIMESHEET_REPORT_QUERY_CURSOR,
+				params
+			})
+			const batch = list || []
+			allTimesheets.push(...batch)
+			if (batch.length < REPORT_PAGE_SIZE || batch.length === 0) break
+			const last = batch[batch.length - 1]
+			cursor = { weekStart: normalizeCursorWeekStart(last.weekStart), _id: last._id }
+		}
+		const flatEntries: any[] = []
+		allTimesheets.forEach(ts => {
+			(ts.entries || []).forEach((entry: any) => {
+				flatEntries.push({ ...entry, user: ts.user })
+			})
+		})
+		const exportRows = flatEntries.map(entry => ({
+			Date: format(new Date(entry.date), 'dd/MM/yyyy'),
+			Client: entry.project?.client?.name || 'No client',
+			Project: entry.project?.name || 'No project',
+			Task: entry.task?.name || 'No task',
+			Person: entry.user ? `${entry.user.firstName} ${entry.user.lastName}` : 'Unknown',
+			Hours: hoursToDecimal(entry.hours || 0),
+			Notes: entry.notes || ''
+		}))
+		return { exportRows, dateRangeStr }
+	// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [normalizeCursorWeekStart])
+
+	const exportToCSV = useCallback(async () => {
+		if (isPaginatedReport) {
+			setIsExporting(true)
+			setShowExportDropdown(false)
+			try {
+				const { exportRows, dateRangeStr } = await fetchAllDataForExport()
+				if (exportRows.length === 0) {
+					alert('No data to export')
+					return
+				}
+				const totalHours = reportTotalHours ?? exportRows.reduce((s, r) => s + (r.Hours ?? 0), 0)
+				const headers = ['Date', 'Client', 'Project', 'Task', 'Person', 'Hours', 'Notes']
+				const csvContent = [
+					headers.join(','),
+					...exportRows.map(row =>
+						headers.map(header => {
+							const value = row[header as keyof typeof row]
+							const strValue = String(value ?? '')
+							if (strValue.includes(',') || strValue.includes('"') || strValue.includes('\n')) {
+								return `"${strValue.replace(/"/g, '""')}"`
+							}
+							return strValue
+						}).join(',')
+					),
+					'',
+					`,,,,Total,${totalHours.toFixed(2)},`
+				].join('\n')
+				const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' })
+				const link = document.createElement('a')
+				link.href = URL.createObjectURL(blob)
+				link.download = `detailed-time-report_${dateRangeStr}.csv`
+				link.click()
+				URL.revokeObjectURL(link.href)
+			} finally {
+				setIsExporting(false)
+			}
+			return
+		}
 		const { exportRows, dateRangeStr } = getExportData()
-		
 		if (exportRows.length === 0) {
 			alert('No data to export')
 			return
 		}
-		
-		// Create CSV content
-		const headers = ['Date', 'Client', 'Project', 'Task', 'Person', 'Hours']
+		const headers = ['Date', 'Client', 'Project', 'Task', 'Person', 'Hours', 'Notes']
 		const csvContent = [
 			headers.join(','),
-			...exportRows.map(row => 
+			...exportRows.map(row =>
 				headers.map(header => {
 					const value = row[header as keyof typeof row]
-					// Escape quotes and wrap in quotes if contains comma
-					const strValue = String(value)
+					const strValue = String(value ?? '')
 					if (strValue.includes(',') || strValue.includes('"') || strValue.includes('\n')) {
 						return `"${strValue.replace(/"/g, '""')}"`
 					}
 					return strValue
 				}).join(',')
 			),
-			'', // Empty row before total
-			`,,,,Total,${totalHours.toFixed(2)}`
+			'',
+			`,,,,Total,${totalTimesheetHours.toFixed(2)},`
 		].join('\n')
-		
-		// Create and download file
 		const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' })
 		const link = document.createElement('a')
 		link.href = URL.createObjectURL(blob)
@@ -606,45 +1068,122 @@ export default function DetailedTimeReport({ userId, userRole = 'admin' }: Detai
 		link.click()
 		URL.revokeObjectURL(link.href)
 		setShowExportDropdown(false)
-	}, [getExportData, totalHours])
+	}, [getExportData, totalTimesheetHours, isPaginatedReport, reportTotalHours, fetchAllDataForExport])
 
-	const exportToExcel = useCallback(() => {
+	const exportToExcel = useCallback(async () => {
+		if (isPaginatedReport) {
+			setIsExporting(true)
+			setShowExportDropdown(false)
+			try {
+				const { exportRows, dateRangeStr } = await fetchAllDataForExport()
+				if (exportRows.length === 0) {
+					alert('No data to export')
+					return
+				}
+				const totalHours = reportTotalHours ?? exportRows.reduce((s, r) => s + (r.Hours ?? 0), 0)
+				const dataWithTotal = [
+					...exportRows,
+					{ Date: '', Client: '', Project: '', Task: '', Person: 'Total', Hours: totalHours, Notes: '' }
+				]
+				const ws = XLSX.utils.json_to_sheet(dataWithTotal)
+				ws['!cols'] = [
+					{ wch: 12 }, { wch: 25 }, { wch: 30 }, { wch: 25 }, { wch: 20 }, { wch: 15 }, { wch: 40 }
+				]
+				const wb = XLSX.utils.book_new()
+				XLSX.utils.book_append_sheet(wb, ws, 'Time Report')
+				XLSX.writeFile(wb, `detailed-time-report_${dateRangeStr}.xlsx`)
+			} finally {
+				setIsExporting(false)
+			}
+			return
+		}
 		const { exportRows, dateRangeStr } = getExportData()
-		
 		if (exportRows.length === 0) {
 			alert('No data to export')
 			return
 		}
-		
-		// Add total row
 		const dataWithTotal = [
 			...exportRows,
-			{ Date: '', Client: '', Project: '', Task: '', Person: 'Total', Hours: totalHours }
+			{ Date: '', Client: '', Project: '', Task: '', Person: 'Total', Hours: totalTimesheetHours, Notes: '' }
 		]
-		
-		// Create worksheet
 		const ws = XLSX.utils.json_to_sheet(dataWithTotal)
-		
-		// Set column widths
 		ws['!cols'] = [
-			{ wch: 12 }, // Date
-			{ wch: 25 }, // Client
-			{ wch: 30 }, // Project
-			{ wch: 25 }, // Task
-			{ wch: 20 }, // Person
-			{ wch: 10 }, // Hours
+			{ wch: 12 }, { wch: 25 }, { wch: 30 }, { wch: 25 }, { wch: 20 }, { wch: 15 }, { wch: 40 }
 		]
-		
-		// Create workbook and add worksheet
 		const wb = XLSX.utils.book_new()
 		XLSX.utils.book_append_sheet(wb, ws, 'Time Report')
-		
-		// Download file
 		XLSX.writeFile(wb, `detailed-time-report_${dateRangeStr}.xlsx`)
 		setShowExportDropdown(false)
-	}, [getExportData, totalHours])
+	}, [getExportData, totalTimesheetHours, isPaginatedReport, reportTotalHours, fetchAllDataForExport])
 
-	const exportToPDF = useCallback(() => {
+	const exportToPDF = useCallback(async () => {
+		if (isPaginatedReport) {
+			setIsExporting(true)
+			setShowExportDropdown(false)
+			try {
+				const { exportRows, dateRangeStr } = await fetchAllDataForExport()
+				if (exportRows.length === 0) {
+					alert('No data to export')
+					return
+				}
+				const totalHours = reportTotalHours ?? exportRows.reduce((s, r) => s + (r.Hours ?? 0), 0)
+				const { start, end } = getDateRange()
+				const doc = new jsPDF('landscape')
+				doc.setFontSize(18)
+				doc.text('Detailed Time Report', 14, 20)
+				doc.setFontSize(11)
+				doc.setTextColor(100)
+				doc.text(`Period: ${format(new Date(start), 'dd/MM/yyyy')} - ${format(new Date(end), 'dd/MM/yyyy')}`, 14, 28)
+				doc.text(`Total Hours: ${totalHours.toFixed(2)}`, 14, 35)
+				doc.text(`Clients: ${selectedClients.length > 0 ? selectedClients.map(c => c.name).join(', ') : 'All'}`, 14, 42)
+				autoTable(doc, {
+					startY: 52,
+					head: [['Date', 'Client', 'Project', 'Task', 'Person', 'Hours', 'Notes']],
+					body: [
+						...exportRows.map(row => [
+							row.Date,
+							row.Client,
+							row.Project,
+							row.Task,
+							row.Person,
+							(row.Hours ?? 0).toFixed(2),
+							row.Notes ?? ''
+						]),
+						['', '', '', '', 'Total', totalHours.toFixed(2), '']
+					],
+					styles: { fontSize: 9, cellPadding: 3 },
+					headStyles: { fillColor: [55, 65, 81], textColor: 255, fontStyle: 'bold' },
+					footStyles: { fillColor: [243, 244, 246], textColor: [17, 24, 39], fontStyle: 'bold' },
+					alternateRowStyles: { fillColor: [249, 250, 251] },
+					columnStyles: {
+						0: { cellWidth: 25 }, 1: { cellWidth: 40 }, 2: { cellWidth: 45 }, 3: { cellWidth: 40 },
+						4: { cellWidth: 35 }, 5: { cellWidth: 22, halign: 'right' }, 6: { cellWidth: 55, halign: 'left' }
+					},
+					didParseCell: (data) => {
+						if (data.row.index === exportRows.length && data.section === 'body') {
+							data.cell.styles.fillColor = [243, 244, 246]
+							data.cell.styles.fontStyle = 'bold'
+						}
+					}
+				})
+				const pageCount = doc.getNumberOfPages()
+				for (let i = 1; i <= pageCount; i++) {
+					doc.setPage(i)
+					doc.setFontSize(8)
+					doc.setTextColor(150)
+					doc.text(
+						`Generated on ${format(new Date(), 'dd/MM/yyyy HH:mm')} | Page ${i} of ${pageCount}`,
+						doc.internal.pageSize.getWidth() / 2,
+						doc.internal.pageSize.getHeight() - 10,
+						{ align: 'center' }
+					)
+				}
+				doc.save(`detailed-time-report_${dateRangeStr}.pdf`)
+			} finally {
+				setIsExporting(false)
+			}
+			return
+		}
 		const { exportRows, dateRangeStr } = getExportData()
 		const { start, end } = getDateRange()
 		
@@ -665,14 +1204,14 @@ export default function DetailedTimeReport({ userId, userRole = 'admin' }: Detai
 		doc.setTextColor(100)
 		doc.text(`Period: ${format(new Date(start), 'dd/MM/yyyy')} - ${format(new Date(end), 'dd/MM/yyyy')}`, 14, 28)
 		
-		// Add summary info
-		doc.text(`Total Hours: ${totalHours.toFixed(2)}`, 14, 35)
+		// Add summary info (single Total Hours from timesheet)
+		doc.text(`Total Hours: ${totalTimesheetHours.toFixed(2)}`, 14, 35)
 		doc.text(`Clients: ${selectedClients.length > 0 ? selectedClients.map(c => c.name).join(', ') : 'All'}`, 14, 42)
 		
-		// Create table
+		// Create table (Hours + Notes)
 		autoTable(doc, {
-			startY: 50,
-			head: [['Date', 'Client', 'Project', 'Task', 'Person', 'Hours']],
+			startY: 52,
+			head: [['Date', 'Client', 'Project', 'Task', 'Person', 'Hours', 'Notes']],
 			body: [
 				...exportRows.map(row => [
 					row.Date,
@@ -680,10 +1219,11 @@ export default function DetailedTimeReport({ userId, userRole = 'admin' }: Detai
 					row.Project,
 					row.Task,
 					row.Person,
-					row.Hours.toFixed(2)
+					(row.Hours ?? 0).toFixed(2),
+					row.Notes ?? ''
 				]),
 				// Total row
-				['', '', '', '', 'Total', totalHours.toFixed(2)]
+				['', '', '', '', 'Total', totalTimesheetHours.toFixed(2), '']
 			],
 			styles: {
 				fontSize: 9,
@@ -704,11 +1244,12 @@ export default function DetailedTimeReport({ userId, userRole = 'admin' }: Detai
 			},
 			columnStyles: {
 				0: { cellWidth: 25 }, // Date
-				1: { cellWidth: 45 }, // Client
-				2: { cellWidth: 55 }, // Project
-				3: { cellWidth: 45 }, // Task
-				4: { cellWidth: 40 }, // Person
-				5: { cellWidth: 20, halign: 'right' }, // Hours
+				1: { cellWidth: 40 }, // Client
+				2: { cellWidth: 45 }, // Project
+				3: { cellWidth: 40 }, // Task
+				4: { cellWidth: 35 }, // Person
+				5: { cellWidth: 22, halign: 'right' }, // Hours
+				6: { cellWidth: 55, halign: 'left' }, // Notes
 			},
 			didParseCell: (data) => {
 				// Style the total row
@@ -737,7 +1278,7 @@ export default function DetailedTimeReport({ userId, userRole = 'admin' }: Detai
 		doc.save(`detailed-time-report_${dateRangeStr}.pdf`)
 		setShowExportDropdown(false)
 	// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [getExportData, totalHours, selectedClients])
+	}, [getExportData, totalTimesheetHours, selectedClients, isPaginatedReport, reportTotalHours, fetchAllDataForExport])
 
 	const handlePrint = useCallback(() => {
 		const { start, end } = getDateRange()
@@ -746,6 +1287,13 @@ export default function DetailedTimeReport({ userId, userRole = 'admin' }: Detai
 			alert('No data to print')
 			return
 		}
+
+		const escapeHtml = (str: string) =>
+			String(str)
+				.replace(/&/g, '&amp;')
+				.replace(/</g, '&lt;')
+				.replace(/>/g, '&gt;')
+				.replace(/"/g, '&quot;')
 
 		// Get headers based on groupBy
 		const getHeaders = () => {
@@ -872,6 +1420,16 @@ export default function DetailedTimeReport({ userId, userRole = 'admin' }: Detai
 						font-weight: 700;
 						padding: 10px 12px;
 					}
+					.notes-row td {
+						padding: 2px 12px 10px 12px;
+						font-size: 11px;
+						color: #6b7280;
+						border-bottom: 1px solid #e5e7eb;
+						text-align: left;
+					}
+					.notes-cell {
+						padding-left: 12px !important;
+					}
 					.footer {
 						margin-top: 24px;
 						padding-top: 12px;
@@ -899,7 +1457,7 @@ export default function DetailedTimeReport({ userId, userRole = 'admin' }: Detai
 					<div style="display: flex; justify-content: space-between; align-items: flex-end;">
 						<div>
 							<div class="total-label">Total Hours</div>
-							<div class="total-hours">${totalHours.toFixed(2)}</div>
+							<div class="total-hours">${totalTimesheetHours.toFixed(2)}</div>
 						</div>
 						<div style="text-align: right;">
 							<div class="summary">
@@ -937,11 +1495,11 @@ export default function DetailedTimeReport({ userId, userRole = 'admin' }: Detai
 						</tr>
 					</thead>
 					<tbody>
-						${sortedGroupedData.map(([, { entries, totalHours: groupTotal, label }]) => {
+						${sortedGroupedData.map(([, { entries, totalTimesheetHours: groupTimesheetTotal, label }]) => {
 							return `
 								<tr class="group-row">
 									<td colspan="${colCount - 1}">${label}</td>
-									<td>${groupTotal.toFixed(2)}</td>
+									<td>${groupTimesheetTotal.toFixed(2)}</td>
 								</tr>
 								${entries.map(entry => {
 									const cells = []
@@ -950,14 +1508,16 @@ export default function DetailedTimeReport({ userId, userRole = 'admin' }: Detai
 									if (groupBy !== 'project') cells.push(entry.project?.name || 'No project')
 									if (groupBy !== 'task') cells.push(entry.task?.name || 'No task')
 									if (groupBy !== 'person') cells.push(entry.user ? `${entry.user.firstName} ${entry.user.lastName}` : 'Unknown')
-									cells.push(entry.hours.toFixed(2))
-									return `<tr>${cells.map(c => `<td>${c}</td>`).join('')}</tr>`
+									cells.push(hoursToDecimal(entry.timesheetHours || 0).toFixed(2))
+									const notes = entry.notes ? escapeHtml(String(entry.notes)) : ''
+									return `<tr>${cells.map(c => `<td>${escapeHtml(String(c))}</td>`).join('')}</tr>
+								${notes ? `<tr class="notes-row"><td colspan="${colCount}" class="notes-cell">${notes}</td></tr>` : ''}`
 								}).join('')}
 							`
 						}).join('')}
 						<tr class="total-row">
 							<td colspan="${colCount - 1}" style="text-align: right;">Total</td>
-							<td>${totalHours.toFixed(2)}</td>
+							<td>${totalTimesheetHours.toFixed(2)}</td>
 						</tr>
 					</tbody>
 				</table>
@@ -982,7 +1542,7 @@ export default function DetailedTimeReport({ userId, userRole = 'admin' }: Detai
 			}
 		}
 	// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [sortedGroupedData, totalHours, selectedClients, selectedProjects, selectedTasks, groupBy])
+	}, [sortedGroupedData, totalTimesheetHours, selectedClients, selectedProjects, selectedTasks, groupBy])
 
 	// Filter functions
 	const filteredClients = availableClients.filter(
@@ -1106,8 +1666,6 @@ export default function DetailedTimeReport({ userId, userRole = 'admin' }: Detai
 
 	const dateRangeDisplay = formatDateRangeDisplay()
 
-	console.log('selectedClients', selectedClients);
-	console.log('uniqueClients', uniqueClients);
 	return (
 		<div className="space-y-6 relative">
 			{/* Loading Overlay */}
@@ -1128,7 +1686,7 @@ export default function DetailedTimeReport({ userId, userRole = 'admin' }: Detai
 					</div>
 					<div className="flex items-center gap-3">
 						{/* Save report button */}
-						{reportData.length > 0 && (
+						{sortedGroupedData.length > 0 && (
 							<SaveReport reportType="detailed_time" startDate={currentDateRange.start} endDate={currentDateRange.end} timeframe={timeframe} clients={selectedClients} projects={selectedProjects} tasks={selectedTasks} />
 						)}
 						{/* Filter toggle button */}
@@ -1155,7 +1713,14 @@ export default function DetailedTimeReport({ userId, userRole = 'admin' }: Detai
 						<div className="relative">
 							<select
 								value={timeframe}
-								onChange={(e) => setTimeframe(e.target.value)}
+								onChange={(e) => {
+									setTimeframe(e.target.value)
+									// Reset custom dates if switching away from custom
+									if (e.target.value !== 'custom') {
+										setCustomStartDate('')
+										setCustomEndDate('')
+									}
+								}}
 								className="appearance-none bg-white border border-gray-300 rounded-md py-2 pl-3 pr-10 text-sm focus:outline-none focus:ring-1 focus:ring-transparent focus:border-black min-w-[180px]"
 							>
 								{timeframeOptions.map(option => (
@@ -1430,7 +1995,7 @@ export default function DetailedTimeReport({ userId, userRole = 'admin' }: Detai
 					<div className="flex justify-between items-start">
 						<div>
 							<p className="text-sm text-gray-600">Total hours</p>
-							<p className="text-2xl font-bold text-gray-900">{totalHours.toFixed(2)}</p>
+							<p className="text-2xl font-bold text-gray-900">{formatSimpleTime(displayTotalHours)}</p>
 						</div>
 						<div className="text-right space-y-1">
 							<div className="flex gap-8">
@@ -1490,13 +2055,23 @@ export default function DetailedTimeReport({ userId, userRole = 'admin' }: Detai
 							<div className="relative" ref={exportRef}>
 								<button
 									type="button"
-									onClick={() => setShowExportDropdown(!showExportDropdown)}
-									className="flex items-center gap-2 bg-white border border-gray-300 rounded-md py-2 px-3 text-sm hover:bg-gray-50"
+									onClick={() => !isExporting && setShowExportDropdown(!showExportDropdown)}
+									disabled={isExporting}
+									className="flex items-center gap-2 bg-white border border-gray-300 rounded-md py-2 px-3 text-sm hover:bg-gray-50 disabled:opacity-70 disabled:cursor-wait min-w-[100px] justify-center"
 								>
-									Export
-									<FiChevronDown className="w-4 h-4 text-gray-400" />
+									{isExporting ? (
+										<>
+											<span className="w-4 h-4 border-2 border-gray-300 border-t-gray-600 rounded-full animate-spin" />
+											<span>Exporting...</span>
+										</>
+									) : (
+										<>
+											Export
+											<FiChevronDown className="w-4 h-4 text-gray-400" />
+										</>
+									)}
 								</button>
-								{showExportDropdown && (
+								{showExportDropdown && !isExporting && (
 									<div className="absolute right-0 mt-1 w-32 bg-white border border-gray-300 rounded-md shadow-lg z-10">
 										<button 
 											type="button"
@@ -1565,7 +2140,7 @@ export default function DetailedTimeReport({ userId, userRole = 'admin' }: Detai
 											Loading report data...
 										</td>
 									</tr>
-								) : reportData.length === 0 ? (
+								) : sortedGroupedData.length === 0 ? (
 									<tr>
 										<td colSpan={5} className="py-12 text-center text-gray-500">
 											No time entries found for the selected filters
@@ -1573,21 +2148,47 @@ export default function DetailedTimeReport({ userId, userRole = 'admin' }: Detai
 									</tr>
 								) : (
 									<>
-										{sortedGroupedData.map(([key, { entries, totalHours: groupTotal, label }]) => (
+										{sortedGroupedData.map(([key, { entries, totalHours: groupTotal, totalTimesheetHours: groupTimesheetTotal, label }]) => {
+											// Calculate dynamic colSpan based on visible columns
+											const visibleCols = [
+												groupBy !== 'date',
+												groupBy !== 'client',
+												groupBy !== 'project',
+												groupBy !== 'task',
+												groupBy !== 'person'
+											].filter(Boolean).length
+											const groupColSpan = visibleCols
+											const isCollapsed = collapsedGroups.has(key)
+											
+											return (
 											<React.Fragment key={key}>
-												{/* Group Header Row */}
-												<tr className="bg-[#eee]">
-													<td colSpan={4} className="py-2 px-4 text-sm text-[#1d1e1c] capitalize">
-														{label}
+												{/* Group Header Row - Clickable to toggle collapse/expand */}
+												<tr 
+													className="bg-[#eee] cursor-pointer hover:bg-[#ddd] transition-colors"
+													onClick={() => toggleGroup(key)}
+													title={isCollapsed ? 'Click to expand' : 'Click to collapse'}
+												>
+													<td colSpan={groupColSpan} className="py-2 px-4 text-sm text-[#1d1e1c] capitalize">
+														<div className="flex items-center gap-2">
+															{isCollapsed ? (
+																<FiChevronRight className="w-4 h-4 text-gray-600 flex-shrink-0" />
+															) : (
+																<FiChevronDown className="w-4 h-4 text-gray-600 flex-shrink-0" />
+															)}
+															<span>{label}</span>
+														</div>
 													</td>
-													<td className="py-2 px-4 text-sm text-[#1d1e1c] capitalize text-right">
+													{/* <td className="py-2 px-4 text-sm text-[#1d1e1c] capitalize text-right">
 														{groupTotal.toFixed(2)}
+													</td> */}
+													<td className="py-2 px-4 text-sm text-[#1d1e1c] capitalize text-right">
+														{formatSimpleTime(groupTimesheetTotal)}
 													</td>
 												</tr>
-												{/* Entry Rows */}
-												{entries.map(entry => (
-													<>
-													<tr key={entry._id} className="hover:bg-gray-50 transition-colors">
+												{/* Entry Rows - Only show if not collapsed */}
+												{!isCollapsed && entries.map(entry => (
+													<React.Fragment key={entry._id}>
+													<tr className="hover:bg-gray-50 transition-colors">
 														{groupBy !== 'date' && (
 															<td className="py-2 px-4 text-gray-900">
 																{format(new Date(entry.date), 'dd/MM/yyyy')}
@@ -1613,35 +2214,106 @@ export default function DetailedTimeReport({ userId, userRole = 'admin' }: Detai
 																{entry.user ? `${entry.user.firstName} ${entry.user.lastName}` : 'Unknown'}
 															</td>
 														)}
+														{/* <td className="py-2 px-4 text-gray-900 text-right">
+															{hoursToDecimal(entry.hours).toFixed(2)}
+														</td> */}
 														<td className="py-2 px-4 text-gray-900 text-right">
-															{entry.hours.toFixed(2)}
+															{formatSimpleTime(entry.timesheetHours || 0)}
 														</td>
 													</tr>
 													<tr className='border-none'>
-														<td></td>
-														<td className='pt-1 pb-3 px-4 text-sm text-gray-900 max-w-xs empty:p-0'>{entry.notes || ''}</td>
-														<td></td>
-														<td></td>
+														{groupBy !== 'date' && <td></td>}
+														<td className='pt-1 pb-3 px-4 text-sm text-gray-900 max-w-xs empty:p-0' colSpan={groupColSpan + 1}>{entry.notes || ''}</td>
 														<td></td>
 													</tr>
-													</>
+													</React.Fragment>
 												))}
 											</React.Fragment>
-										))}
+											)
+										})}
 										{/* Total Row */}
-										<tr className="">
-											<td colSpan={4} className="py-3 px-4 font-semibold text-gray-900 text-right">
-												Total
-											</td>
-											<td className="py-3 px-4 font-semibold text-gray-900 text-right">
-												{totalHours.toFixed(2)}
-											</td>
-										</tr>
+										{(() => {
+											const visibleCols = [
+												groupBy !== 'date',
+												groupBy !== 'client',
+												groupBy !== 'project',
+												groupBy !== 'task',
+												groupBy !== 'person'
+											].filter(Boolean).length
+											return (
+												<tr className="">
+													<td colSpan={visibleCols} className="py-3 px-4 font-semibold text-gray-900 text-right">
+														Total
+													</td>
+													<td className="py-3 px-4 font-semibold text-gray-900 text-right">
+														{formatSimpleTime(totalTimesheetHours)}
+													</td>
+												</tr>
+											)
+										})()}
 									</>
 								)}
 							</tbody>
 						</table>
 					</div>
+
+					{/* Pagination for "All" – at bottom of table, #0b1014 shade */}
+					{isPaginatedReport && (
+						<div className="flex items-center justify-center gap-3 py-3">
+							<button
+								type="button"
+								onClick={() => loadReportPage(reportPage - 1)}
+								disabled={reportPage === 0 || isLoadingReport}
+								className="flex items-center gap-1.5 px-2 py-2 text-sm font-medium text-gray-500 hover:text-gray-700 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:text-gray-500"
+							>
+								<FiChevronLeft className="w-4 h-4" />
+								Previous
+							</button>
+							<div className="flex items-center gap-1">
+								{(() => {
+									const currentPage = reportPage + 1
+									const totalPages = reportTotalPages ?? Math.max(reportPage + 3, 3)
+									const maxVisible = 3
+									// Always show 3 page numbers when total >= 3; sliding window centered on current when possible
+									const numVisible = Math.min(maxVisible, totalPages)
+									const startPage = totalPages <= maxVisible
+										? 1
+										: Math.max(1, Math.min(currentPage - 1, totalPages - numVisible + 1))
+									const pages = Array.from(
+										{ length: numVisible },
+										(_, i) => startPage + i
+									)
+									return pages.map((p) => {
+										const isActive = p === currentPage
+										return (
+											<button
+												key={p}
+												type="button"
+												onClick={() => loadReportPage(p - 1)}
+												disabled={isLoadingReport}
+												className={`min-w-[36px] h-9 px-2.5 text-sm font-medium rounded-md transition-colors ${
+													isActive
+														? 'bg-[#0b1014] text-white'
+														: 'text-[#0b1014] bg-transparent hover:underline'
+												} disabled:opacity-50 disabled:cursor-not-allowed`}
+											>
+												{p}
+											</button>
+										)
+									})
+								})()}
+							</div>
+							<button
+								type="button"
+								onClick={() => loadReportPage(reportPage + 1)}
+								disabled={timesheetEntries.length < REPORT_PAGE_SIZE || isLoadingReport}
+								className="flex items-center gap-1.5 px-2 py-2 text-sm font-medium text-[#0b1014] hover:underline disabled:opacity-50 disabled:cursor-not-allowed disabled:text-gray-500"
+							>
+								Next
+								<FiChevronRight className="w-4 h-4" />
+							</button>
+						</div>
+					)}
 				</div>
 			)}
 		</div>

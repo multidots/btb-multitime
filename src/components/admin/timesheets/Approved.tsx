@@ -9,6 +9,16 @@ import toast from 'react-hot-toast'
 import { FiUser, FiCheckCircle, FiX, FiChevronLeft, FiChevronRight } from 'react-icons/fi'
 import { format, startOfWeek, endOfWeek, addWeeks, subWeeks, isSameWeek } from 'date-fns'
 
+interface TimesheetEntry {
+  _key: string
+  date: string
+  project: { _id: string; name: string }
+  task?: { _id: string; name: string }
+  hours: number
+  notes?: string
+  isBillable: boolean
+}
+
 interface ApprovedTimesheet {
   _id: string
   _createdAt: string
@@ -16,57 +26,63 @@ interface ApprovedTimesheet {
     _id: string
     firstName: string
     lastName: string
-    email: string
+    email?: string
   }
-  date: string
-  hours: number
-  isApproved: boolean
-  approvedAt: string
-  approvedBy: {
+  weekStart: string
+  weekEnd: string
+  year: number
+  weekNumber: number
+  status: string
+  totalHours: number
+  billableHours: number
+  nonBillableHours: number
+  approvedBy?: {
     _id: string
     firstName: string
     lastName: string
   }
+  approvedAt?: string
+  entries: TimesheetEntry[]
 }
 
-export default function ApprovedTimesheets() {
+export default function TimesheetApproved() {
   const { data: session } = useSession()
 
   const [unapprovingWeek, setUnapprovingWeek] = useState<string | null>(null)
-  
+
   // Week navigation state - default to current week
-  const [selectedWeekStart, setSelectedWeekStart] = useState<Date>(() => 
+  const [selectedWeekStart, setSelectedWeekStart] = useState<Date>(() =>
     startOfWeek(new Date(), { weekStartsOn: 1 })
   )
-  
+
   // Check if we're viewing the current week
-  const isCurrentWeek = useMemo(() => 
+  const isCurrentWeek = useMemo(() =>
     isSameWeek(selectedWeekStart, new Date(), { weekStartsOn: 1 }),
     [selectedWeekStart]
   )
-  
+
   // Calculate the end of the selected week
-  const selectedWeekEnd = useMemo(() => 
+  const selectedWeekEnd = useMemo(() =>
     endOfWeek(selectedWeekStart, { weekStartsOn: 1 }),
     [selectedWeekStart]
   )
-  
+
   // Navigation handlers
   const goToPreviousWeek = () => {
     setSelectedWeekStart(prev => subWeeks(prev, 1))
   }
-  
+
   const goToNextWeek = () => {
     setSelectedWeekStart(prev => addWeeks(prev, 1))
   }
-  
+
   const goToCurrentWeek = () => {
     setSelectedWeekStart(startOfWeek(new Date(), { weekStartsOn: 1 }))
   }
 
   const fetchApprovedTimesheets = useCallback(async (): Promise<ApprovedTimesheet[]> => {
     try {
-      const query = `*[_type == "timeEntry" && isApproved == true] | order(date desc)[0...100]{
+      const query = `*[_type == "timesheet" && status == "approved"] | order(weekStart desc)[0...100]{
         _id,
         _createdAt,
         user->{
@@ -75,14 +91,28 @@ export default function ApprovedTimesheets() {
           lastName,
           email
         },
-        date,
-        hours,
-        isApproved,
-        approvedAt,
+        weekStart,
+        weekEnd,
+        year,
+        weekNumber,
+        status,
+        totalHours,
+        billableHours,
+        nonBillableHours,
         approvedBy->{
           _id,
           firstName,
           lastName
+        },
+        approvedAt,
+        entries[]{
+          _key,
+          date,
+          project->{_id, name},
+          task->{_id, name},
+          hours,
+          notes,
+          isBillable
         }
       }`
 
@@ -91,7 +121,6 @@ export default function ApprovedTimesheets() {
         params: {}
       })
 
-      console.log('Fetched approved timesheets:', timesheets)
       return timesheets || []
     } catch (error) {
       console.error('Error fetching approved timesheets:', error)
@@ -104,18 +133,15 @@ export default function ApprovedTimesheets() {
     { refetchOnMount: true }
   )
 
-  // Group timesheets by week and then by user
+  // Group timesheets by week and then by user, flattening entries
   const groupedTimesheets = useMemo(() => {
     if (!approvedTimesheets) return {}
 
-    const groups: { [key: string]: { weekStart: Date; weekEnd: Date; users: { [userId: string]: { user: any; entries: ApprovedTimesheet[]; totalHours: number } }; totalHours: number } } = {}
+    const groups: { [key: string]: { weekStart: Date; weekEnd: Date; users: { [userId: string]: { user: any; entries: any[]; totalHours: number } }; totalHours: number } } = {}
 
     approvedTimesheets.forEach((timesheet) => {
-      // Parse date string (YYYY-MM-DD) as local date to avoid timezone issues
-      const [year, month, day] = timesheet.date.split('-').map(Number)
-      const entryDate = new Date(year, month - 1, day)
-      const weekStart = startOfWeek(entryDate, { weekStartsOn: 1 }) // Monday
-      const weekEnd = endOfWeek(weekStart, { weekStartsOn: 1 }) // Monday start
+      const weekStart = new Date(timesheet.weekStart)
+      const weekEnd = new Date(timesheet.weekEnd)
       const weekKey = format(weekStart, 'yyyy-MM-dd')
       const userId = timesheet.user._id
 
@@ -136,9 +162,22 @@ export default function ApprovedTimesheets() {
         }
       }
 
-      groups[weekKey].users[userId].entries.push(timesheet)
-      groups[weekKey].users[userId].totalHours += timesheet.hours || 0
-      groups[weekKey].totalHours += timesheet.hours || 0
+      // Flatten entries and add timesheet metadata
+      if (timesheet.entries && Array.isArray(timesheet.entries)) {
+        timesheet.entries.forEach((entry: TimesheetEntry) => {
+          const entryWithMetadata = {
+            ...entry,
+            _id: `${timesheet._id}-${entry._key}`,
+            timesheetId: timesheet._id,
+            approvedBy: timesheet.approvedBy,
+            approvedAt: timesheet.approvedAt,
+            user: timesheet.user
+          }
+          groups[weekKey].users[userId].entries.push(entryWithMetadata)
+          groups[weekKey].users[userId].totalHours += entry.hours || 0
+          groups[weekKey].totalHours += entry.hours || 0
+        })
+      }
     })
 
     return groups
@@ -158,54 +197,44 @@ export default function ApprovedTimesheets() {
     const selectedWeekKey = format(selectedWeekStart, 'yyyy-MM-dd')
     const weekData = groupedTimesheets[selectedWeekKey]
     if (!weekData) return 0
-    return Object.values(weekData.users).reduce((total: number, userData: any) => 
+    return Object.values(weekData.users).reduce((total: number, userData: any) =>
       total + userData.entries.length, 0
     )
   }, [groupedTimesheets, selectedWeekStart])
 
-  const handleUnapproveWeek = async (weekStart: string) => {
-    setUnapprovingWeek(weekStart)
-    try {
-      const response = await fetch(`/api/time-entries/unapprove`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ weekStart })
-      })
-
-      if (!response.ok) {
-        const error = await response.json()
-        throw new Error(error.error || 'Failed to unapprove week')
-      }
-
-      toast.success('Week unapproved successfully')
-      await refetch()
-    } catch (error: any) {
-      console.error('Error unapproving week:', error)
-      toast.error(error.message || 'Failed to unapprove week')
-    } finally {
-      setUnapprovingWeek(null)
-    }
-  }
-
   const handleUnapproveUserWeek = async (weekStart: string, userId: string) => {
-    const confirmed = window.confirm('Are you sure you want to unapprove this user\'s week? This action will mark all their time entries for this week as unapproved.')
-    
+    const confirmed = window.confirm('Are you sure you want to unapprove this user\'s week? Their timesheets for this week will be set to submitted (pending approval again).')
+
     if (!confirmed) return
-    
+
     setUnapprovingWeek(`${weekStart}-${userId}`)
     try {
-      const response = await fetch(`/api/time-entries/unapprove`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ weekStart, userId })
-      })
-
-      if (!response.ok) {
-        const error = await response.json()
-        throw new Error(error.error || 'Failed to unapprove user week')
+      // Get all timesheet IDs for this user and week
+      const weekData = groupedTimesheets[weekStart]
+      if (!weekData || !weekData.users[userId]) {
+        throw new Error('User data not found')
       }
 
-      toast.success('User week unapproved successfully')
+      const userEntries = weekData.users[userId].entries
+      const timesheetIds = [...new Set(userEntries.map((entry: any) => entry.timesheetId))]
+
+      // Unapprove all timesheets for this user (API sets status to 'submitted')
+      const promises = timesheetIds.map(id =>
+        fetch(`/api/timesheets/${id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'unapprove' }),
+        })
+      )
+
+      const responses = await Promise.all(promises)
+      const allOk = responses.every(res => res.ok)
+
+      if (!allOk) {
+        throw new Error('Failed to unapprove some timesheets')
+      }
+
+      toast.success('Timesheets set to submitted (pending approval again)')
       await refetch()
     } catch (error: any) {
       console.error('Error unapproving user week:', error)
@@ -254,16 +283,16 @@ export default function ApprovedTimesheets() {
         <h3 className="text-sm font-medium text-gray-900">
           Approved Timesheets ({approvedTimesheets?.length || 0} total)
         </h3>
-        
+
         {/* Filter dropdown */}
-        <select 
+        <select
           className="text-sm border border-gray-300 rounded-lg pl-4 pr-8 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-transparent focus:border-black"
           defaultValue="week"
         >
           <option value="week">Week</option>
         </select>
       </div>
-      
+
       {/* Week Navigation */}
       <div className="flex items-center gap-4">
         <div className="flex items-center border border-gray-300 rounded-md overflow-hidden">
@@ -276,17 +305,22 @@ export default function ApprovedTimesheets() {
           </button>
           <button
             onClick={goToNextWeek}
-            className="p-2 hover:bg-gray-100 transition"
+            disabled={isCurrentWeek}
+            className={`p-2 transition ${
+              isCurrentWeek 
+                ? 'opacity-50 cursor-not-allowed' 
+                : 'hover:bg-gray-100'
+            }`}
             aria-label="Next week"
           >
             <FiChevronRight className="w-5 h-5 text-gray-600" />
           </button>
         </div>
-        
+
         <span className="text-lg font-medium text-gray-900">
           {format(selectedWeekStart, 'd')} – {format(selectedWeekEnd, 'd MMM yyyy')}
         </span>
-        
+
         {!isCurrentWeek && (
           <button
             onClick={goToCurrentWeek}
@@ -296,7 +330,7 @@ export default function ApprovedTimesheets() {
           </button>
         )}
       </div>
-      
+
       {Object.keys(filteredTimesheets).length === 0 ? (
         <div className="p-8 text-center border border-gray-200 rounded-lg bg-gray-50">
           <FiCheckCircle className="w-12 h-12 mx-auto text-gray-400 mb-4" />
@@ -361,28 +395,28 @@ export default function ApprovedTimesheets() {
                       </tr>
                     </thead>
                     <tbody className="">
-                      {userData.entries.map((timesheet: ApprovedTimesheet) => (
-                        <tr key={timesheet._id} className="transition hover:bg-gray-50 transition-colors">
+                      {userData.entries.map((entry: any) => (
+                        <tr key={entry._id} className="transition hover:bg-gray-50 transition-colors">
                           <td className="px-4 py-2 text-center">
                             <p className="text-gray-900">
-                              {format(new Date(timesheet.date), 'MMM dd, yyyy')}
+                              {format(new Date(entry.date), 'MMM dd, yyyy')}
                             </p>
                           </td>
                           <td className="px-4 py-2 text-center">
                             <p className="font-medium text-gray-900">
-                              {formatSimpleTime(timesheet.hours || 0)}
+                              {formatSimpleTime(entry.hours || 0)}
                             </p>
                           </td>
                           <td className="px-4 py-2">
                             <div>
                               <p className="font-medium text-gray-900">
-                                {timesheet.approvedBy?.firstName} {timesheet.approvedBy?.lastName}
+                                {entry.approvedBy?.firstName} {entry.approvedBy?.lastName}
                               </p>
                             </div>
                           </td>
                           <td className="px-4 py-2 text-center">
                             <p className="text-gray-600">
-                              {format(new Date(timesheet.approvedAt), 'MMM dd, yyyy HH:mm')}
+                              {entry.approvedAt ? format(new Date(entry.approvedAt), 'MMM dd, yyyy HH:mm') : '-'}
                             </p>
                           </td>
                           <td className="px-4 py-2 text-center">

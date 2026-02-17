@@ -188,7 +188,6 @@ export default function AssignedProjectsTab({ userId }: AssignedProjectsTabProps
       setLoadingProjects(false)
     }
   }
-  // console.log('availableProjects', availableProjects)
 
   const handleAssignProject = async (projectId: string) => {
     setAssigningProject(projectId)
@@ -282,7 +281,6 @@ export default function AssignedProjectsTab({ userId }: AssignedProjectsTabProps
     const userAssignment = project.assignedUsers.find(
       (assignment) => assignment.user?._id === targetUserId
     )
-    // console.log('userAssignment', userAssignment)
     return userAssignment ? userAssignment.isActive === false : false
   }
 
@@ -328,8 +326,6 @@ export default function AssignedProjectsTab({ userId }: AssignedProjectsTabProps
   }
 
   const projects = data?.assignedProjects || []
-  // console.log('projects', projects)
-  // console.log('user', userId)
   return (
     <div className="bg-white rounded-lg shadow">
       <div className="px-6 py-4 border-b border-gray-200">

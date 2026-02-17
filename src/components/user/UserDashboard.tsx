@@ -562,13 +562,6 @@ export default function UserDashboard({ userId, initialData }: UserDashboardProp
       // If less than 1 minute, set to 0 hours
       const calculatedHours = elapsedTime < 60 ? 0 : formatDecimalHours(hours)
 
-      console.log('Sending stop timer request:', {
-        timerId: data.runningTimer._id,
-        elapsedTime,
-        calculatedHours,
-        runningTimer: data.runningTimer
-      })
-
       const response = await fetch(`/api/time-entries/${data.runningTimer._id}`, {
         method: 'PATCH',
         headers: {
@@ -623,12 +616,6 @@ export default function UserDashboard({ userId, initialData }: UserDashboardProp
       const hours = elapsedTime / 3600
       // If less than 1 minute, set to 0 hours
       const calculatedHours = elapsedTime < 60 ? 0 : formatDecimalHours(hours)
-
-      console.log('Stopping timer without reload:', {
-        timerId: data.runningTimer._id,
-        elapsedTime,
-        calculatedHours,
-      })
 
       const response = await fetch(`/api/time-entries/${data.runningTimer._id}`, {
         method: 'PATCH',
@@ -773,14 +760,6 @@ export default function UserDashboard({ userId, initialData }: UserDashboardProp
     // Auto-populate with the current entry's project and task details
     const projectId = entry.project?._id || ''
     const taskId = entry.task?._id || ''
-
-    console.log('Editing entry:', {
-      entryId: entry._id,
-      projectId,
-      projectName: entry.project?.name,
-      taskId,
-      taskName: entry.task?.name
-    })
 
     const hoursValue = entry.hours.toString()
     setManualEntryData({
@@ -946,16 +925,6 @@ export default function UserDashboard({ userId, initialData }: UserDashboardProp
       entry.date >= weekStart && entry.date <= weekEnd && !(entry.isApproved && entry.isLocked)
     ) || []
 
-    console.log('Current week entries for submission:', {
-      weekStart,
-      weekEnd,
-      totalEntries: entriesToSubmit.length,
-      currentWeek: format(currentWeek, 'yyyy-MM-dd'),
-      selectedDate: format(selectedDate, 'yyyy-MM-dd'),
-      allEntries: freshData?.recentEntries?.length || 0,
-      entries: entriesToSubmit.map((e: any) => ({ id: e._id, date: e.date, approved: e.isApproved, locked: e.isLocked, hours: e.hours }))
-    })
-
     if (entriesToSubmit.length === 0) {
       toast.error('No time entries found for this week to submit')
       return
@@ -973,9 +942,6 @@ export default function UserDashboard({ userId, initialData }: UserDashboardProp
     setActionLoading('submit-week')
 
     try {
-      // Debug logging
-      console.log('Submitting week:', { weekStart, weekEnd, entriesToSubmit: entriesToSubmit.length })
-
       // Use submit-week endpoint for both submit and resubmit
       const response = await fetch('/api/time-entries/submit-week', {
         method: 'POST',
@@ -995,7 +961,6 @@ export default function UserDashboard({ userId, initialData }: UserDashboardProp
       }
 
       const result = await response.json()
-      console.log('Submit week API response:', result)
 
       toast.success(result.message || `Week ${actionText}ted for approval`)
 
@@ -1069,18 +1034,6 @@ export default function UserDashboard({ userId, initialData }: UserDashboardProp
     entries.forEach((entry) => {
       const projectId = entry.project?._id || 'no-project'
 
-      // Debug logging to see what project data looks like
-      if (entry.project) {
-        console.log('Entry project data:', {
-          id: entry.project._id,
-          name: entry.project.name,
-          code: entry.project.code,
-          client: entry.project.client
-        })
-      } else {
-        console.log('Entry missing project data:', entry)
-      }
-
       if (!projectGroups[projectId]) {
         projectGroups[projectId] = {
           projectId: entry.project?._id || '',
@@ -1090,13 +1043,6 @@ export default function UserDashboard({ userId, initialData }: UserDashboardProp
           color: '#3b82f6',
           entries: []
         }
-
-        // Log when we create a group to help debug
-        console.log('Creating project group:', {
-          projectId: entry.project?._id,
-          projectName: entry.project?.name,
-          projectCode: entry.project?.code
-        })
       }
       projectGroups[projectId].entries.push(entry)
     })
@@ -1690,15 +1636,20 @@ export default function UserDashboard({ userId, initialData }: UserDashboardProp
     const previousWeekEnd = format(subDays(endOfWeek(currentWeek, { weekStartsOn: 1 }), 7), 'yyyy-MM-dd');
     
     try {
-      const previousEntries = await sanityFetch<Array<{
-        _id: string
-        project: { _id: string; name: string }
-        task: { _id: string; name: string }
+      // Fetch timesheets that contain entries in the previous week date range
+      const previousTimesheets = await sanityFetch<Array<{
+        entries: Array<{
+          _key: string
+          project: { _ref: string }
+          task: { _ref: string }
+        }>
       }>>({
-        query: `*[_type == "timeEntry" && user._ref == $userId && date >= $startDate && date <= $endDate] | order(project.name asc) { 
-          _id, 
-          project->{_id, name}, 
-          task->{_id, name}
+        query: `*[_type == "timesheet" && user._ref == $userId && weekStart <= $endDate && weekEnd >= $startDate && count(entries[date >= $startDate && date <= $endDate]) > 0] {
+          "entries": entries[date >= $startDate && date <= $endDate]{
+            _key,
+            project->{_id, name},
+            task->{_id, name}
+          }
         }`,
         params: { 
           userId, 
@@ -1706,6 +1657,30 @@ export default function UserDashboard({ userId, initialData }: UserDashboardProp
           endDate: previousWeekEnd 
         },
       });
+      
+      // Flatten timesheet entries to match the expected structure
+      const previousEntries: Array<{
+        _id: string
+        project: { _id: string; name: string }
+        task: { _id: string; name: string }
+      }> = [];
+      
+      previousTimesheets.forEach(timesheet => {
+        if (timesheet.entries && Array.isArray(timesheet.entries)) {
+          timesheet.entries.forEach((entry: any) => {
+            if (entry.project && entry.task) {
+              previousEntries.push({
+                _id: entry._key || `${entry.project._id}-${entry.task._id}`,
+                project: entry.project,
+                task: entry.task
+              });
+            }
+          });
+        }
+      });
+      
+      // Sort by project name to match original behavior
+      previousEntries.sort((a, b) => a.project.name.localeCompare(b.project.name));
       
       // Extract unique project-task combinations
       const uniqueRows: EmptyRow[] = [];
@@ -1742,7 +1717,7 @@ export default function UserDashboard({ userId, initialData }: UserDashboardProp
         if (uniqueRows.length > 0) {
           toast.success(`Copied ${uniqueRows.length} row(s) from previous week`);
         } else {
-          toast('No new rows to copy from previous week');
+          toast('No new rows to copy from previous weekfff');
         }
       }
     } catch (error) {
@@ -1842,12 +1817,59 @@ export default function UserDashboard({ userId, initialData }: UserDashboardProp
 
       // Try up to 30 days back to find entries
       for (let i = 0; i < 30; i++) {
-        const dayEntries = await sanityFetch<any[]>(
-          {
-            query: `*[_type == "timeEntry" && user._ref == $userId && date == $sourceDayStr] | order(project.name asc, task.name asc) { _id, user->{_id, firstName, lastName}, project->{_id, name}, task->{_id, name}, date, hours, notes, isBillable }`,
-            params: { userId, sourceDayStr },
+        // Fetch timesheets that contain entries for the source day
+        const dayTimesheets = await sanityFetch<Array<{
+          entries: Array<{
+            _key: string
+            date: string
+            project: { _ref: string }
+            task: { _ref: string }
+            hours: number
+            notes?: string
+            isBillable: boolean
+          }>
+        }>>({
+          query: `*[_type == "timesheet" && user._ref == $userId && weekStart <= $sourceDayStr && weekEnd >= $sourceDayStr && count(entries[date == $sourceDayStr]) > 0] {
+            "entries": entries[date == $sourceDayStr]{
+              _key,
+              date,
+              "project": *[_type == "project" && _id == ^.project._ref][0]{_id, name},
+              "task": *[_type == "task" && _id == ^.task._ref][0]{_id, name},
+              hours,
+              notes,
+              isBillable
+            }
+          }`,
+          params: { userId, sourceDayStr },
+        });
+
+        // Flatten timesheet entries to match the expected structure
+        const dayEntries: any[] = [];
+        dayTimesheets.forEach(timesheet => {
+          if (timesheet.entries && Array.isArray(timesheet.entries)) {
+            timesheet.entries.forEach((entry: any) => {
+              if (entry.project && entry.task) {
+                dayEntries.push({
+                  _id: entry._key || `${entry.project._id}-${entry.task._id}-${entry.date}`,
+                  user: { _id: userId, firstName: '', lastName: '' }, // User info not needed for copying
+                  project: entry.project,
+                  task: entry.task,
+                  date: entry.date,
+                  hours: entry.hours,
+                  notes: entry.notes || '',
+                  isBillable: entry.isBillable
+                });
+              }
+            });
           }
-        );
+        });
+
+        // Sort by project name, then task name to match original behavior
+        dayEntries.sort((a, b) => {
+          const projectCompare = a.project.name.localeCompare(b.project.name);
+          if (projectCompare !== 0) return projectCompare;
+          return (a.task?.name || '').localeCompare(b.task?.name || '');
+        });
 
         if (dayEntries.length > 0) {
           sourceEntries = dayEntries;
@@ -1925,7 +1947,6 @@ export default function UserDashboard({ userId, initialData }: UserDashboardProp
     try {
       // If there's a running timer that's different from the entry we're starting, stop it first
       if (data?.runningTimer && data.runningTimer._id !== entry._id) {
-        console.log('Stopping existing timer before starting new one')
         const stopSuccess = await stopTimerWithoutReload()
         if (!stopSuccess) {
           return

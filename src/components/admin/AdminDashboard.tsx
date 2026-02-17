@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useMemo } from 'react'
 import { FiFolder, FiUsers, FiBriefcase, FiClock, FiTrendingUp, FiAlertCircle } from 'react-icons/fi'
 import { sanityFetch } from '@/lib/sanity'
 import { ADMIN_DASHBOARD_QUERY } from '@/lib/queries'
@@ -43,6 +43,22 @@ export default function AdminDashboard({ initialStats }: AdminDashboardProps) {
     fetchDashboardData()
   }, [])
 
+  // Flatten timesheet entries into a single list (no array::flatten in GROQ), sort by date desc, take 9
+  const recentTimeEntries = useMemo(() => {
+    const sheets = stats?.recentTimesheets ?? []
+    const flat = sheets.flatMap((ts) =>
+      (ts.entries ?? []).map((ent) => ({
+        _id: `${ent._key}^${ts._id}`,
+        user: ts.user,
+        project: ent.project,
+        date: ent.date ?? '',
+        hours: ent.hours ?? 0,
+        isBillable: ent.isBillable,
+      }))
+    )
+    return flat.sort((a, b) => (b.date || '').localeCompare(a.date || '')).slice(0, 9)
+  }, [stats?.recentTimesheets])
+
   if (loading) {
     return <div>Loading...</div>
   }
@@ -68,8 +84,8 @@ export default function AdminDashboard({ initialStats }: AdminDashboardProps) {
       color: 'bg-purple-500',
     },
     {
-      name: 'This Week Hours',
-      value: formatSimpleTime(stats?.thisWeekHours || 0),
+      name: 'Approved Hours - ' + format(new Date(), 'MMM'),
+      value: formatSimpleTime(stats?.thisMonthHours || 0),
       icon: FiClock,
       color: 'theme-color-bg',
     },
@@ -178,15 +194,15 @@ export default function AdminDashboard({ initialStats }: AdminDashboardProps) {
           </div>
         </div>
 
-        {/* Recent Time Entries */}
+        {/* Recent Timesheet Entries */}
         <div className="bg-white rounded-lg shadow-custom">
           <div className="p-6 border-b py-2">
-            <h3 className="text-lg font-semibold text-gray-900">Recent Time Entries</h3>
+            <h3 className="text-lg font-semibold text-gray-900">Recent Timesheet Entries</h3>
           </div>
           <div className="p-6 pt-1 overflow-y-auto">
-            {stats?.recentTimeEntries && stats.recentTimeEntries.length > 0 ? (
+            {recentTimeEntries.length > 0 ? (
               <div className="space-y-0 h-[280px]">
-                {stats.recentTimeEntries.map((entry) => (
+                {recentTimeEntries.map((entry) => (
                   <div
                     key={entry._id}
                     className="flex items-center justify-between py-2 border-b last:border-b-0"
@@ -217,7 +233,7 @@ export default function AdminDashboard({ initialStats }: AdminDashboardProps) {
                 ))}
               </div>
             ) : (
-              <p className="text-sm text-gray-500 mt-4">No recent time entries</p>
+              <p className="text-sm text-gray-500 mt-4">No recent timesheet entries</p>
             )}
           </div>
         </div>

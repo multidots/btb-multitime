@@ -52,14 +52,18 @@ export default function DashboardLayout({ children, role }: DashboardLayoutProps
 
   const adminNavigationBase = [
     { name: 'Dashboard', href: '/admin', icon: FiHome },
-    { name: 'Time', href: '/admin/time-entries', icon: FiClock },
+    { name: 'Time', href: '/admin/timesheets', icon: FiClock },
     { name: 'Projects', href: '/admin/projects', icon: FiFolder },
     { name: 'Team', href: '/admin/team', icon: FiUsers },
     { name: 'Reports', href: '/admin/reports', icon: FiBarChart2 },
     { name: 'Manage', href: '/admin/manage', icon: FiBriefcase },
   ]
   
-  const adminNavigation = role === 'admin'
+  // Check actual session role for UI Settings visibility, not the prop
+  // This ensures only actual admins see UI Settings, even if role prop is incorrect
+  const isActualAdmin = session?.user?.role === 'admin'
+  
+  const adminNavigation = isActualAdmin
     ? [
         ...adminNavigationBase,
         // { name: 'CMS Studio', href: '/studio', icon: FiSettings },
@@ -68,7 +72,7 @@ export default function DashboardLayout({ children, role }: DashboardLayoutProps
     : adminNavigationBase
 
   const userNavigation = [
-    { name: 'Time', href: '/dashboard', icon: FiClock },
+    { name: 'Time', href: '/dashboard/timesheet', icon: FiClock },
     { name: 'Projects', href: '/dashboard/projects', icon: FiFolder },
     { name: 'Reports', href: '/dashboard/reports', icon: FiBarChart2 },
   ]
@@ -83,9 +87,9 @@ export default function DashboardLayout({ children, role }: DashboardLayoutProps
           {/* <div className="flex items-center justify-between h-16"> */}
           <div className="flex items-center justify-between py-2">
             {/* Logo */}
-            <Link href={role === 'admin' || role === 'manager' ? '/admin' : '/dashboard'} className="flex items-center space-x-2 shrink-0">
+              <Link href={role === 'admin' || role === 'manager' ? '/admin' : '/dashboard/timesheet'} className="flex items-center space-x-2 shrink-0">
               <FiClock className="w-7 h-7" />
-              <span className="text-lg font-bold">MD Hourlog</span>
+              <span className="text-lg font-bold">Multitime</span>
             </Link>
 
             {/* Desktop navigation */}

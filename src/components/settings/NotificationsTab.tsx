@@ -1,5 +1,6 @@
 'use client'
 
+import { usePageTitle } from '@/lib/pageTitleImpl'
 import { useState, useEffect } from 'react'
 import { FiInfo, FiSave } from 'react-icons/fi'
 
@@ -21,6 +22,7 @@ interface NotificationsTabProps {
 }
 
 export default function NotificationsTab({ user, teamManagerName }: NotificationsTabProps) {
+  usePageTitle('Notifications')
   const [settings, setSettings] = useState<NotificationSettings>({
     dailyPersonalReminders: false,
     weeklyTeamReminders: true,

@@ -22,7 +22,6 @@ interface ProjectAssignedUsersProps {
 
 const ProjectAssignedUsers = forwardRef<ProjectAssignedUsersRef, ProjectAssignedUsersProps>(
 	({users, formData, setFormData, resetUsers, initialProjectManagers = [], projectAssignedUsers = []}, ref) => {
-		// console.log('projectAssignedUsers', projectAssignedUsers)
 	
 	const [userSearchTerm, setUserSearchTerm] = useState('')
 	const [isUserDropdownOpen, setIsUserDropdownOpen] = useState(false)
@@ -48,7 +47,6 @@ const ProjectAssignedUsers = forwardRef<ProjectAssignedUsersRef, ProjectAssigned
 			const prevStr = JSON.stringify(previousInitialManagersRef.current.sort())
 			const newStr = JSON.stringify([...initialProjectManagers].sort())
 			if (prevStr !== newStr) {
-				// console.log('Setting project managers from prop:', initialProjectManagers)
 				setProjectManagers(initialProjectManagers)
 				previousInitialManagersRef.current = [...initialProjectManagers]
 			}
@@ -146,7 +144,6 @@ const ProjectAssignedUsers = forwardRef<ProjectAssignedUsersRef, ProjectAssigned
         // Also remove from project managers if they were one
         setProjectManagers((prev: string[]) => prev.filter((id: string) => id !== userId))
     }
-	// console.log('formData updated', formData)
 
     const toggleProjectManager = (userId: string) => {
         setProjectManagers(prev => 
@@ -222,7 +219,6 @@ const ProjectAssignedUsers = forwardRef<ProjectAssignedUsersRef, ProjectAssigned
         })
         .filter((user: any) => user !== null)
     
-	// console.log('formData', formData)
 	return (
 		<div className="py-8 w-full">
 			<label className="block text-lg font-bold text-gray-700 mb-5">

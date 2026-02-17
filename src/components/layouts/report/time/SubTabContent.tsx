@@ -3,13 +3,15 @@
 import React, { useState } from 'react'
 import { useSearchParams } from 'next/navigation'
 import { FiChevronRight, FiChevronDown } from 'react-icons/fi'
-import { formatDecimalHours } from '@/lib/time'
+import { formatDecimalHours, formatSimpleTime } from '@/lib/time'
 import { format } from 'date-fns'
 
 interface TabDataItem {
 	name: string
 	hours: number
 	billableHours: number
+	timesheetHours?: number
+	timesheetBillableHours?: number
 	clientName?: string
 	clientId?: string
 	projectId?: string
@@ -22,12 +24,16 @@ interface TabDataItem {
 		lastName: string
 		hours: number
 		billableHours: number
+		timesheetHours?: number
+		timesheetBillableHours?: number
 	}[]
 	tasks?: {
 		taskId: string
 		name: string
 		hours: number
 		billableHours: number
+		timesheetHours?: number
+		timesheetBillableHours?: number
 	}[]
 }
 
@@ -80,10 +86,8 @@ export default function SubTabContent({currentTabData, maxHours, activeSubTab, b
 		if (hasClientId && activeSubTab === 'projects') return true // Client filter + projects tab, show link
 		return false
 	}
-	// console.log('currentTabData', currentTabData)
 	const colSpan = (showClientColumn && !hasClientId) ? 4 : 3
 	// const itemId = activeSubTab === 'clients' ? 'clientId' : activeSubTab === 'projects' ? 'projectId' : activeSubTab === 'tasks' ? 'taskId' : 'userId'
-	// console.log('itemId', itemId)
 
 	// Function to build URL with new parameter while preserving existing ones (except tab)
 	const buildUrlWithParam = (paramName: string, paramValue: string | undefined) => {
@@ -112,8 +116,10 @@ export default function SubTabContent({currentTabData, maxHours, activeSubTab, b
 				{showClientColumn && !hasClientId && (
 					<th className="text-left py-2 px-4 font-normal text-sm text-[#1d1e1c]">Client</th>
 				)}
+				{/* <th className="text-right py-2 px-4 font-normal text-sm text-[#1d1e1c]">Hours</th> */}
 				<th className="text-right py-2 px-4 font-normal text-sm text-[#1d1e1c]">Hours</th>
-				<th className="text-right py-2 px-4 font-normal text-sm text-[#1d1e1c]">Billable hours</th>
+				{/* <th className="text-right py-2 px-4 font-normal text-sm text-[#1d1e1c]">Billable hours</th> */}
+				<th className="text-right py-2 px-4 font-normal text-sm text-[#1d1e1c]">Billable Hours</th>
 				</tr>
 			</thead>
 			<tbody>
@@ -126,11 +132,16 @@ export default function SubTabContent({currentTabData, maxHours, activeSubTab, b
 				) : (
 				<>
 					{currentTabData.map((item, index) => {
-					const percentage = maxHours > 0 ? (item.hours / maxHours) * 100 : 0
-					const billablePercentage = item.hours > 0 ? (item.billableHours / item.hours) * 100 : 0
-					const billableBarWidth = maxHours > 0 ? (item.billableHours / maxHours) * 100 : 0
-					const nonBillableBarWidth = maxHours > 0 ? ((item.hours - item.billableHours) / maxHours) * 100 : 0
-					// console.log('item', item);
+					// const percentage = maxHours > 0 ? (item.hours / maxHours) * 100 : 0
+					// const billablePercentage = item.hours > 0 ? (item.billableHours / item.hours) * 100 : 0
+					// const billableBarWidth = maxHours > 0 ? (item.billableHours / maxHours) * 100 : 0
+					// const nonBillableBarWidth = maxHours > 0 ? ((item.hours - item.billableHours) / maxHours) * 100 : 0
+					// Timesheet bar widths (same scale as Hours bar for comparison)
+					const tsHours = item.timesheetHours ?? 0
+					const tsBillable = item.timesheetBillableHours ?? 0
+					const tsNonBillable = tsHours - tsBillable
+					const timesheetBillableBarWidth = maxHours > 0 ? (tsBillable / maxHours) * 100 : 0
+					const timesheetNonBillableBarWidth = maxHours > 0 ? (tsNonBillable / maxHours) * 100 : 0
 					
 					// Build URL with appropriate parameter based on active tab
 					const getItemLink = () => {
@@ -233,24 +244,63 @@ export default function SubTabContent({currentTabData, maxHours, activeSubTab, b
 								)}
 							</td>
 						)}
+						{/* Hours column commented out
 						<td className="py-3 px-4 text-right">
 							<div className="flex items-center justify-end space-x-2">
 								<div className="w-32 h-4 bg-[#86B1F1] rounded-[4px] overflow-hidden relative">
-								{/* Billable hours - blue-800 */}
 								<div
 									className="h-full bg-[#376bdd] rounded-s-[4px] overflow-hidden absolute left-0 top-0"
 									style={{ width: `${billableBarWidth}%` }}
 								/>
-								{/* Non-billable hours - blue-200 */}
 								<div
 									className="h-full bg-[#86b1f1] absolute left-0 top-0"
-									style={{ 
+									style={{
 										width: `${nonBillableBarWidth}%`,
 										left: `${billableBarWidth}%`
 									}}
 								/>
 							</div>
 							<span className="text-gray-900 font-normal underline min-w-[3rem] text-right">
+								<a className="text-[#2a59c1] hover:text-[#2a59c1] hover:underline" href={`${basePath}/detailed?${[
+									startDate ? `start_date=${startDate}` : '',
+									endDate ? `end_date=${endDate}` : '',
+									activeProjects ? `active_projects=${activeProjects}` : '',
+									userRole === 'user' && currentUserId ? `user[]=${currentUserId}` : '',
+									(userRole === 'admin' || userRole === 'manager') && activeSubTab === 'team' && item.userId ? `user[]=${item.userId}` : '',
+									(userRole === 'admin' || userRole === 'manager') && activeSubTab !== 'team' && urlUserId ? `user[]=${urlUserId}` : '',
+									activeSubTab === 'clients' && item.clientId ? `clients[]=${item.clientId}` : '',
+									activeSubTab === 'projects' && item.clientId ? `clients[]=${item.clientId}` : '',
+									activeSubTab === 'projects' && item.projectId ? `projects[]=${item.projectId}` : '',
+									activeSubTab === 'tasks' && item.clientId ? `clients[]=${item.clientId}` : '',
+									activeSubTab === 'tasks' && item.taskId ? `tasks[]=${item.taskId}` : '',
+									activeSubTab === 'team' && hasClientId ? `clients[]=${hasClientId}` : '',
+									...(activeSubTab === 'team' && hasTaskId ? [`tasks[]=${hasTaskId}`] : []),
+									...(activeSubTab === 'team' && item.tasks?.length ? item.tasks.map(t => `tasks[]=${t.taskId}`) : []),
+								].filter(Boolean).join('&')}`}>
+									{formatDecimalHours(item.hours).toFixed(2)}
+								</a>
+							</span>
+							</div>
+						</td>
+						*/}
+						<td className="py-3 px-4 text-right text-gray-900 font-normal">
+							<div className="flex items-center justify-end space-x-2">
+								<div className="w-32 h-4 bg-[#86B1F1] rounded-[4px] overflow-hidden relative">
+									{/* Timesheet billable hours - blue-800 */}
+									<div
+										className="h-full bg-[#376bdd] rounded-s-[4px] overflow-hidden absolute left-0 top-0"
+										style={{ width: `${timesheetBillableBarWidth}%` }}
+									/>
+									{/* Timesheet non-billable hours - blue-200 */}
+									<div
+										className="h-full bg-[#86b1f1] absolute left-0 top-0"
+										style={{
+											width: `${timesheetNonBillableBarWidth}%`,
+											left: `${timesheetBillableBarWidth}%`
+										}}
+									/>
+								</div>
+								<span className="text-gray-900 font-normal underline min-w-[3rem] text-right">
 								<a className="text-[#2a59c1] hover:text-[#2a59c1] hover:underline" href={`${basePath}/detailed?${[
 									startDate ? `start_date=${startDate}` : '',
 									endDate ? `end_date=${endDate}` : '',
@@ -266,15 +316,34 @@ export default function SubTabContent({currentTabData, maxHours, activeSubTab, b
 									activeSubTab === 'clients' && item.clientId ? `clients[]=${item.clientId}` : '',
 									activeSubTab === 'projects' && item.clientId ? `clients[]=${item.clientId}` : '',
 									activeSubTab === 'projects' && item.projectId ? `projects[]=${item.projectId}` : '',
+									activeSubTab === 'tasks' && item.clientId ? `clients[]=${item.clientId}` : '',
 									activeSubTab === 'tasks' && item.taskId ? `tasks[]=${item.taskId}` : '',
+									activeSubTab === 'team' && hasClientId ? `clients[]=${hasClientId}` : '',
+									...(activeSubTab === 'team' && hasTaskId ? [`tasks[]=${hasTaskId}`] : []),
+									...(activeSubTab === 'team' && item.tasks?.length ? item.tasks.map(t => `tasks[]=${t.taskId}`) : []),
+									`entry_type=timesheet`,
 								].filter(Boolean).join('&')}`}>
-									{formatDecimalHours(item.hours).toFixed(2)}
+									{/* {formatDecimalHours(item.timesheetHours || 0).toFixed(2)} */}
+									{/* {item.timesheetHours} */}
+									{`${formatSimpleTime(item.timesheetHours || 0)}`}
+									{/* normalize the time to H:MM format */}
+									{/* {formatSimpleTime(item.timesheetHours || 0)} */}
 								</a>
 							</span>
 							</div>
 						</td>
+						{/* Billable hours column commented out
 						<td className="py-3 px-4 text-right text-gray-900 font-normal">
 							{formatDecimalHours(item.billableHours).toFixed(2)} ({billablePercentage.toFixed(0)}%)
+						</td>
+						*/}
+						<td className="py-3 px-4 text-right text-gray-900 font-normal">
+							{formatSimpleTime(item.timesheetBillableHours ?? 0)}
+							{((item.timesheetBillableHours ?? 0) > 0 && (item.timesheetHours ?? 0) > 0) && (
+								<span className="text-gray-500 text-sm ml-1">
+									({(((item.timesheetBillableHours ?? 0) / (item.timesheetHours ?? 1)) * 100).toFixed(0)}%)
+								</span>
+							)}
 						</td>
 						</tr>
 					)
@@ -282,15 +351,23 @@ export default function SubTabContent({currentTabData, maxHours, activeSubTab, b
 					<tr className="font-semibold border-t border-[#1d1e1c40]">
 					<td className="py-3 px-4 font-normal text-sm">Total</td>
 					{showClientColumn && !hasClientId && <td className="py-3 px-4"></td>}
-					<td className="py-3 px-4 text-right">
+					{/* <td className="py-3 px-4 text-right">
 						{formatDecimalHours(
 						currentTabData.reduce((sum, item) => sum + item.hours, 0)
 						).toFixed(2)}
-					</td>
+					</td> */}
 					<td className="py-3 px-4 text-right">
+						{formatSimpleTime(currentTabData.reduce((sum, item) => sum + (item.timesheetHours || 0), 0))}
+					</td>
+					{/* <td className="py-3 px-4 text-right">
 						{formatDecimalHours(
 						currentTabData.reduce((sum, item) => sum + item.billableHours, 0)
 						).toFixed(2)}
+					</td> */}
+					<td className="py-3 px-4 text-right">
+						{formatSimpleTime(
+						currentTabData.reduce((sum, item) => sum + (item.timesheetBillableHours ?? 0), 0)
+						)}
 					</td>
 					</tr>
 				</>

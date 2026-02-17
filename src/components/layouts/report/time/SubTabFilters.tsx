@@ -2,6 +2,18 @@ import React, { useState, useRef, useEffect } from 'react'
 import { FiPrinter, FiChevronRight, FiDownload } from 'react-icons/fi'
 import { format } from 'date-fns'
 
+/** Format decimal hours as "H:MM" (e.g. 8.5 → "8:30") */
+const formatHoursMinutes = (decimalHours: number): string => {
+	const h = Math.max(0, Number(decimalHours) || 0)
+	let hrs = Math.floor(h)
+	let mins = Math.round((h - hrs) * 60)
+	if (mins >= 60) {
+		mins = 0
+		hrs += 1
+	}
+	return `${hrs}:${String(mins).padStart(2, '0')}`
+}
+
 interface FilterActiveProjectProps {
 	checked: boolean
 	onChange: (checked: boolean) => void
@@ -50,11 +62,17 @@ interface FilterExportProps {
 		billableHours: number
 		nonBillableHours: number
 		billablePercentage: number
+		timesheetHours?: number
+		timesheetBillableHours?: number
+		timesheetNonBillableHours?: number
+		timesheetBillablePercentage?: number
 	}
 	activeSubTab: 'clients' | 'projects' | 'tasks' | 'team'
 	currentTabData: TabDataItem[]
 	clientName?: string | null
 	projectName?: string | null
+	/** When true, report title and totals use timesheet data as primary source */
+	useTimesheetData?: boolean
 }
 
 const FilterExport = ({
@@ -65,7 +83,8 @@ const FilterExport = ({
 	activeSubTab,
 	currentTabData,
 	clientName,
-	projectName
+	projectName,
+	useTimesheetData = true
 }: FilterExportProps) => {
 	const [isOpen, setIsOpen] = useState(false)
 	const dropdownRef = useRef<HTMLDivElement>(null)
@@ -120,6 +139,24 @@ const FilterExport = ({
 		}
 	}
 
+	// Use timesheet data when useTimesheetData is true, otherwise fall back to time-entry data
+	const getItemHours = (item: TabDataItem) =>
+		useTimesheetData ? ((item.timesheetHours ?? item.hours) || 0) : (item.hours || 0)
+	const getItemBillableHours = (item: TabDataItem) =>
+		useTimesheetData ? ((item.timesheetBillableHours ?? item.billableHours) || 0) : (item.billableHours || 0)
+	const totalHoursForExport = useTimesheetData
+		? ((summaryStats.timesheetHours ?? summaryStats.totalHours) || 0)
+		: (summaryStats.totalHours || 0)
+	const totalBillableForExport = useTimesheetData
+		? ((summaryStats.timesheetBillableHours ?? summaryStats.billableHours) || 0)
+		: (summaryStats.billableHours || 0)
+	const totalNonBillableForExport = useTimesheetData
+		? ((summaryStats.timesheetNonBillableHours ?? summaryStats.nonBillableHours) ?? (totalHoursForExport - totalBillableForExport))
+		: (summaryStats.nonBillableHours ?? (totalHoursForExport - totalBillableForExport))
+	const billablePctForExport = useTimesheetData
+		? ((summaryStats.timesheetBillablePercentage ?? summaryStats.billablePercentage) ?? (totalHoursForExport > 0 ? (totalBillableForExport / totalHoursForExport) * 100 : 0))
+		: (summaryStats.billablePercentage ?? (totalHoursForExport > 0 ? (totalBillableForExport / totalHoursForExport) * 100 : 0))
+
 	// Generate CSV content
 	const generateCSV = () => {
 		const showClientColumn = activeSubTab === 'projects'
@@ -129,33 +166,35 @@ const FilterExport = ({
 			: [nameLabel, 'Hours', 'Billable Hours', 'Billable %']
 		
 		const rows = currentTabData.map(item => {
-			const billablePercentage = item.hours > 0 ? ((item.billableHours / item.hours) * 100).toFixed(0) : '0'
+			const hours = getItemHours(item)
+			const billableHours = getItemBillableHours(item)
+			const billablePercentage = hours > 0 ? ((billableHours / hours) * 100).toFixed(0) : '0'
 			if (showClientColumn) {
 				return [
 					item.name,
 					item.clientName || 'Unknown Client',
-					item.hours.toFixed(2),
-					item.billableHours.toFixed(2),
+					formatHoursMinutes(hours),
+					formatHoursMinutes(billableHours),
 					`${billablePercentage}%`
 				]
 			}
 			return [
 				item.name,
-				item.hours.toFixed(2),
-				item.billableHours.toFixed(2),
+				formatHoursMinutes(hours),
+				formatHoursMinutes(billableHours),
 				`${billablePercentage}%`
 			]
 		})
 
-		// Add totals row
-		const totalHours = currentTabData.reduce((sum, item) => sum + item.hours, 0)
-		const totalBillableHours = currentTabData.reduce((sum, item) => sum + item.billableHours, 0)
+		// Add totals row (use timesheet-based totals when available)
+		const totalHours = currentTabData.reduce((sum, item) => sum + getItemHours(item), 0)
+		const totalBillableHours = currentTabData.reduce((sum, item) => sum + getItemBillableHours(item), 0)
 		const totalBillablePercentage = totalHours > 0 ? ((totalBillableHours / totalHours) * 100).toFixed(0) : '0'
 		
 		if (showClientColumn) {
-			rows.push(['Total', '', totalHours.toFixed(2), totalBillableHours.toFixed(2), `${totalBillablePercentage}%`])
+			rows.push(['Total', '', formatHoursMinutes(totalHours), formatHoursMinutes(totalBillableHours), `${totalBillablePercentage}%`])
 		} else {
-			rows.push(['Total', totalHours.toFixed(2), totalBillableHours.toFixed(2), `${totalBillablePercentage}%`])
+			rows.push(['Total', formatHoursMinutes(totalHours), formatHoursMinutes(totalBillableHours), `${totalBillablePercentage}%`])
 		}
 
 		// Convert to CSV string
@@ -197,9 +236,9 @@ const FilterExport = ({
 	const exportToPDF = () => {
 		const showClientColumn = activeSubTab === 'projects'
 		
-		// Calculate max hours for bar widths
+		// Calculate max hours for bar widths (use timesheet-based hours when available)
 		const maxHours = currentTabData.length > 0 
-			? Math.max(...currentTabData.map(item => item.hours))
+			? Math.max(...currentTabData.map(item => getItemHours(item)))
 			: 0
 
 		const getDateRangeDisplayTitle = () => {
@@ -222,16 +261,18 @@ const FilterExport = ({
 			}
 		}
 
-		// Generate table rows
+		// Generate table rows (use timesheet-based hours when available)
 		const generateTableRows = () => {
 			if (currentTabData.length === 0) {
 				return `<tr><td colspan="${showClientColumn ? 4 : 3}" style="text-align: center; padding: 48px; color: #6b7280;">No time entries found for this period</td></tr>`
 			}
 
 			const rows = currentTabData.map(item => {
-				const billablePercentage = item.hours > 0 ? (item.billableHours / item.hours) * 100 : 0
-				const billableBarWidth = maxHours > 0 ? (item.billableHours / maxHours) * 100 : 0
-				const nonBillableBarWidth = maxHours > 0 ? ((item.hours - item.billableHours) / maxHours) * 100 : 0
+				const hours = getItemHours(item)
+				const billableHours = getItemBillableHours(item)
+				const billablePercentage = hours > 0 ? (billableHours / hours) * 100 : 0
+				const billableBarWidth = maxHours > 0 ? (billableHours / maxHours) * 100 : 0
+				const nonBillableBarWidth = maxHours > 0 ? ((hours - billableHours) / maxHours) * 100 : 0
 
 				return `
 					<tr style="border-bottom: 1px solid #f3f4f6;">
@@ -243,26 +284,26 @@ const FilterExport = ({
 									<div style="height: 100%; background-color: #1e40af; border-radius: 9999px; position: absolute; left: 0; top: 0; width: ${billableBarWidth}%;"></div>
 									<div style="height: 100%; background-color: #60a5fa; border-radius: 9999px; position: absolute; top: 0; width: ${nonBillableBarWidth}%; left: ${billableBarWidth}%;"></div>
 								</div>
-								<span style="font-weight: 500; min-width: 48px; text-align: right;">${item.hours.toFixed(2)}</span>
+								<span style="font-weight: 500; min-width: 48px; text-align: right;">${formatHoursMinutes(hours)}</span>
 							</div>
 						</td>
 						<td style="padding: 12px 16px; text-align: right; font-weight: 500;">
-							${item.billableHours.toFixed(2)} (${billablePercentage.toFixed(0)}%)
+							${formatHoursMinutes(billableHours)} (${billablePercentage.toFixed(0)}%)
 						</td>
 					</tr>
 				`
 			}).join('')
 
-			// Add total row
-			const totalHours = currentTabData.reduce((sum, item) => sum + item.hours, 0)
-			const totalBillableHours = currentTabData.reduce((sum, item) => sum + item.billableHours, 0)
+			// Add total row (use timesheet-based totals when available)
+			const totalHours = currentTabData.reduce((sum, item) => sum + getItemHours(item), 0)
+			const totalBillableHours = currentTabData.reduce((sum, item) => sum + getItemBillableHours(item), 0)
 
 			return rows + `
 				<tr style="background-color: #f9fafb; font-weight: 600;">
 					<td style="padding: 12px 16px;">Total</td>
 					${showClientColumn ? '<td style="padding: 12px 16px;"></td>' : ''}
-					<td style="padding: 12px 16px; text-align: right;">${totalHours.toFixed(2)}</td>
-					<td style="padding: 12px 16px; text-align: right;">${totalBillableHours.toFixed(2)}</td>
+					<td style="padding: 12px 16px; text-align: right;">${formatHoursMinutes(totalHours)}</td>
+					<td style="padding: 12px 16px; text-align: right;">${formatHoursMinutes(totalBillableHours)}</td>
 				</tr>
 			`
 		}
@@ -271,7 +312,7 @@ const FilterExport = ({
 			<!DOCTYPE html>
 			<html>
 			<head>
-				<title>Time Report - ${getDateRangeDisplayTitle()}</title>
+				<title>${useTimesheetData ? 'Timesheet' : 'Time'} Report - ${getDateRangeDisplayTitle()}</title>
 				<style>
 					* { margin: 0; padding: 0; box-sizing: border-box; }
 					body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; color: #1f2937; padding: 40px; }
@@ -307,25 +348,25 @@ const FilterExport = ({
 
 				<div class="stats-container">
 					<div class="stat-box">
-						<div class="stat-label">Total hours</div>
-						<div class="stat-value">${summaryStats.totalHours.toFixed(2)}</div>
+						<div class="stat-label">${useTimesheetData ? 'Total timesheet hours' : 'Total hours'}</div>
+						<div class="stat-value">${formatHoursMinutes(totalHoursForExport)}</div>
 					</div>
 					
 					<div class="donut-container">
 						<svg class="donut" width="80" height="80" viewBox="0 0 42 42">
 							<circle cx="21" cy="21" r="15.91549430918954" fill="transparent" stroke="#dbeafe" stroke-width="4"></circle>
-							<circle cx="21" cy="21" r="15.91549430918954" fill="transparent" stroke="#1e40af" stroke-width="4" stroke-dasharray="${summaryStats.billablePercentage} ${100 - summaryStats.billablePercentage}" stroke-dashoffset="0"></circle>
+							<circle cx="21" cy="21" r="15.91549430918954" fill="transparent" stroke="#1e40af" stroke-width="4" stroke-dasharray="${billablePctForExport} ${100 - billablePctForExport}" stroke-dashoffset="0"></circle>
 						</svg>
 						<div class="donut-center">
-							<div class="donut-percentage">${summaryStats.billablePercentage.toFixed(0)}%</div>
+							<div class="donut-percentage">${billablePctForExport.toFixed(0)}%</div>
 						</div>
 					</div>
 					
 					<div class="stat-box">
 						<div class="stat-label">Billable</div>
-						<div class="stat-value">${summaryStats.billableHours.toFixed(2)}</div>
+						<div class="stat-value">${formatHoursMinutes(totalBillableForExport)}</div>
 						<div class="stat-sub">Non-billable</div>
-						<div class="stat-value" style="font-size: 18px;">${summaryStats.nonBillableHours.toFixed(2)}</div>
+						<div class="stat-value" style="font-size: 18px;">${formatHoursMinutes(totalNonBillableForExport)}</div>
 					</div>
 					
 					<div class="stat-box">
@@ -434,6 +475,8 @@ interface TabDataItem {
 	name: string
 	hours: number
 	billableHours: number
+	timesheetHours?: number
+	timesheetBillableHours?: number
 	clientName?: string
 	clientId?: string
 	projectId?: string
@@ -450,11 +493,17 @@ interface FilterPrintProps {
 		billableHours: number
 		nonBillableHours: number
 		billablePercentage: number
+		timesheetHours?: number
+		timesheetBillableHours?: number
+		timesheetNonBillableHours?: number
+		timesheetBillablePercentage?: number
 	}
 	activeSubTab: 'clients' | 'projects' | 'tasks' | 'team'
 	currentTabData: TabDataItem[]
 	clientName?: string | null
 	projectName?: string | null
+	/** When true, report title and totals use timesheet data as primary source */
+	useTimesheetData?: boolean
 }
 
 const FilterPrint = ({
@@ -465,8 +514,27 @@ const FilterPrint = ({
 	activeSubTab,
 	currentTabData,
 	clientName,
-	projectName
+	projectName,
+	useTimesheetData = true
 }: FilterPrintProps) => {
+	// Use timesheet data when useTimesheetData is true, otherwise fall back to time-entry data
+	const getItemHours = (item: TabDataItem) =>
+		useTimesheetData ? ((item.timesheetHours ?? item.hours) || 0) : (item.hours || 0)
+	const getItemBillableHours = (item: TabDataItem) =>
+		useTimesheetData ? ((item.timesheetBillableHours ?? item.billableHours) || 0) : (item.billableHours || 0)
+	const totalHoursForPrint = useTimesheetData
+		? ((summaryStats.timesheetHours ?? summaryStats.totalHours) || 0)
+		: (summaryStats.totalHours || 0)
+	const totalBillableForPrint = useTimesheetData
+		? ((summaryStats.timesheetBillableHours ?? summaryStats.billableHours) || 0)
+		: (summaryStats.billableHours || 0)
+	const totalNonBillableForPrint = useTimesheetData
+		? ((summaryStats.timesheetNonBillableHours ?? summaryStats.nonBillableHours) ?? (totalHoursForPrint - totalBillableForPrint))
+		: (summaryStats.nonBillableHours ?? (totalHoursForPrint - totalBillableForPrint))
+	const billablePctForPrint = useTimesheetData
+		? ((summaryStats.timesheetBillablePercentage ?? summaryStats.billablePercentage) ?? (totalHoursForPrint > 0 ? (totalBillableForPrint / totalHoursForPrint) * 100 : 0))
+		: (summaryStats.billablePercentage ?? (totalHoursForPrint > 0 ? (totalBillableForPrint / totalHoursForPrint) * 100 : 0))
+
 	const handlePrint = () => {
 		// Get dynamic label based on active subtab
 		const getNameColumnLabel = () => {
@@ -505,9 +573,9 @@ const FilterPrint = ({
 			}
 		}
 
-		// Calculate max hours for bar widths
+		// Calculate max hours for bar widths (use timesheet-based hours when available)
 		const maxHours = currentTabData.length > 0 
-			? Math.max(...currentTabData.map(item => item.hours))
+			? Math.max(...currentTabData.map(item => getItemHours(item)))
 			: 0
 
 		// Build base query params with date filters
@@ -548,7 +616,7 @@ const FilterPrint = ({
 			return `${baseUrl}?${params.toString()}`
 		}
 
-		// Generate table rows
+		// Generate table rows (use timesheet-based hours when available)
 		const generateTableRows = () => {
 			if (currentTabData.length === 0) {
 				return `<tr><td colspan="3" style="text-align: center; padding: 48px; color: #6b7280;">No time entries found for this period</td></tr>`
@@ -557,9 +625,11 @@ const FilterPrint = ({
 			const showClientColumn = activeSubTab === 'projects'
 			const linkStyle = 'color: #2563eb; text-decoration: none;'
 			const rows = currentTabData.map(item => {
-				const billablePercentage = item.hours > 0 ? (item.billableHours / item.hours) * 100 : 0
-				const billableBarWidth = maxHours > 0 ? (item.billableHours / maxHours) * 100 : 0
-				const nonBillableBarWidth = maxHours > 0 ? ((item.hours - item.billableHours) / maxHours) * 100 : 0
+				const hours = getItemHours(item)
+				const billableHours = getItemBillableHours(item)
+				const billablePercentage = hours > 0 ? (billableHours / hours) * 100 : 0
+				const billableBarWidth = maxHours > 0 ? (billableHours / maxHours) * 100 : 0
+				const nonBillableBarWidth = maxHours > 0 ? ((hours - billableHours) / maxHours) * 100 : 0
 				
 				const itemLink = buildItemLink(item)
 				const clientLink = buildClientLink(item.clientId)
@@ -582,27 +652,27 @@ const FilterPrint = ({
 									<div style="height: 100%; background-color: #1e40af; border-radius: 9999px; position: absolute; left: 0; top: 0; width: ${billableBarWidth}%;"></div>
 									<div style="height: 100%; background-color: #60a5fa; border-radius: 9999px; position: absolute; top: 0; width: ${nonBillableBarWidth}%; left: ${billableBarWidth}%;"></div>
 								</div>
-								<span style="font-weight: 500; min-width: 48px; text-align: right;">${item.hours.toFixed(2)}</span>
+								<span style="font-weight: 500; min-width: 48px; text-align: right;">${formatHoursMinutes(hours)}</span>
 							</div>
 						</td>
 						<td style="padding: 12px 16px; text-align: right; font-weight: 500;">
-							${item.billableHours.toFixed(2)} (${billablePercentage.toFixed(0)}%)
+							${formatHoursMinutes(billableHours)} (${billablePercentage.toFixed(0)}%)
 						</td>
 					</tr>
 				`
 			}).join('')
 
-			// Add total row
-			const totalHours = currentTabData.reduce((sum, item) => sum + item.hours, 0)
-			const totalBillableHours = currentTabData.reduce((sum, item) => sum + item.billableHours, 0)
+			// Add total row (use timesheet-based totals when available)
+			const totalHours = currentTabData.reduce((sum, item) => sum + getItemHours(item), 0)
+			const totalBillableHours = currentTabData.reduce((sum, item) => sum + getItemBillableHours(item), 0)
 			const colSpan = showClientColumn ? 4 : 3
 
 			return rows + `
 				<tr style="background-color: #f9fafb; font-weight: 600;">
 					<td style="padding: 12px 16px;">Total</td>
 					${showClientColumn ? '<td style="padding: 12px 16px;"></td>' : ''}
-					<td style="padding: 12px 16px; text-align: right;">${totalHours.toFixed(2)}</td>
-					<td style="padding: 12px 16px; text-align: right;">${totalBillableHours.toFixed(2)}</td>
+					<td style="padding: 12px 16px; text-align: right;">${formatHoursMinutes(totalHours)}</td>
+					<td style="padding: 12px 16px; text-align: right;">${formatHoursMinutes(totalBillableHours)}</td>
 				</tr>
 			`
 		}
@@ -614,7 +684,7 @@ const FilterPrint = ({
 			<!DOCTYPE html>
 			<html>
 			<head>
-				<title>Time Report - ${getDateRangeTitle()}</title>
+				<title>${useTimesheetData ? 'Timesheet' : 'Time'} Report - ${getDateRangeTitle()}</title>
 				<style>
 					* { margin: 0; padding: 0; box-sizing: border-box; }
 					body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; color: #1f2937; padding: 40px; }
@@ -650,25 +720,25 @@ const FilterPrint = ({
 
 				<div class="stats-container">
 					<div class="stat-box">
-						<div class="stat-label">Total hours</div>
-						<div class="stat-value">${summaryStats.totalHours.toFixed(2)}</div>
+						<div class="stat-label">${useTimesheetData ? 'Total timesheet hours' : 'Total hours'}</div>
+						<div class="stat-value">${formatHoursMinutes(totalHoursForPrint)}</div>
 					</div>
 					
 					<div class="donut-container">
 						<svg class="donut" width="80" height="80" viewBox="0 0 42 42">
 							<circle cx="21" cy="21" r="15.91549430918954" fill="transparent" stroke="#dbeafe" stroke-width="4"></circle>
-							<circle cx="21" cy="21" r="15.91549430918954" fill="transparent" stroke="#1e40af" stroke-width="4" stroke-dasharray="${summaryStats.billablePercentage} ${100 - summaryStats.billablePercentage}" stroke-dashoffset="0"></circle>
+							<circle cx="21" cy="21" r="15.91549430918954" fill="transparent" stroke="#1e40af" stroke-width="4" stroke-dasharray="${billablePctForPrint} ${100 - billablePctForPrint}" stroke-dashoffset="0"></circle>
 						</svg>
 						<div class="donut-center">
-							<div class="donut-percentage">${summaryStats.billablePercentage.toFixed(0)}%</div>
+							<div class="donut-percentage">${billablePctForPrint.toFixed(0)}%</div>
 						</div>
 					</div>
 					
 					<div class="stat-box">
 						<div class="stat-label">Billable</div>
-						<div class="stat-value">${summaryStats.billableHours.toFixed(2)}</div>
+						<div class="stat-value">${formatHoursMinutes(totalBillableForPrint)}</div>
 						<div class="stat-sub">Non-billable</div>
-						<div class="stat-value" style="font-size: 18px;">${summaryStats.nonBillableHours.toFixed(2)}</div>
+						<div class="stat-value" style="font-size: 18px;">${formatHoursMinutes(totalNonBillableForPrint)}</div>
 					</div>
 					
 					<div class="stat-box">

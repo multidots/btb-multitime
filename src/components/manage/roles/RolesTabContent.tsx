@@ -5,7 +5,7 @@ import { useDataFetcher } from '@/lib/hooks/useDataFetcher'
 import { sanityFetch } from '@/lib/sanity'
 import { urlFor } from '@/lib/sanity'
 import { JOB_CATEGORIES_QUERY } from '@/lib/queries'
-import { FiCheckSquare, FiX, FiTrash2, FiLoader } from 'react-icons/fi'
+import { FiCheckSquare, FiX, FiTrash2, FiLoader, FiMoreVertical, FiEdit2 } from 'react-icons/fi'
 
 interface JobCategory {
   _id: string
@@ -35,40 +35,71 @@ const RolesTabContent = () => {
   const [usersLoading, setUsersLoading] = useState(false)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [isDeleting, setIsDeleting] = useState<string | null>(null)
+  const [openDropdownId, setOpenDropdownId] = useState<string | null>(null)
+  const [dropdownPosition, setDropdownPosition] = useState<{ x: number; y: number } | null>(null)
   
   // State for table row selection (selecting roles)
   const [selectedRoleIds, setSelectedRoleIds] = useState<Set<string>>(new Set())
 
   const fetchRolesData = useCallback(async (): Promise<JobCategoryWithUsers[]> => {
-    // First fetch all job categories
-    const categories = await sanityFetch<JobCategory[]>({
-      query: JOB_CATEGORIES_QUERY
+    // OPTIMIZED: Fetch categories and users in parallel (2 queries instead of N+1)
+    const [categories, allUsers] = await Promise.all([
+      sanityFetch<JobCategory[]>({
+        query: JOB_CATEGORIES_QUERY
+      }),
+      sanityFetch<Array<User & { categoryId?: string }>>({
+        query: `*[_type == "user" && defined(jobCategory) && isActive == true && isArchived != true] | order(firstName asc){
+          _id,
+          firstName,
+          lastName,
+          avatar,
+          "categoryId": jobCategory._ref
+        }`
+      })
+    ])
+
+    // Group users by category in memory (fast)
+    const usersByCategory = new Map<string, User[]>()
+    allUsers.forEach(user => {
+      if (user.categoryId) {
+        const existing = usersByCategory.get(user.categoryId) || []
+        usersByCategory.set(user.categoryId, [...existing, {
+          _id: user._id,
+          firstName: user.firstName,
+          lastName: user.lastName,
+          avatar: user.avatar
+        }])
+      }
     })
 
-    // Then fetch users for each category
-    const categoriesWithUsers = await Promise.all(
-      categories.map(async (category) => {
-        const users = await sanityFetch<User[]>({
-          query: `*[_type == "user" && jobCategory._ref == $categoryId && isActive == true && isArchived != true] | order(firstName asc){
-            _id,
-            firstName,
-            lastName,
-            avatar
-          }`,
-          params: { categoryId: category._id }
-        })
-
-        return {
-          ...category,
-          users: users || []
-        }
-      })
-    )
-
-    return categoriesWithUsers
+    // Combine categories with their users
+    return categories.map(category => ({
+      ...category,
+      users: usersByCategory.get(category._id) || []
+    }))
   }, [])
 
   const { data: rolesData, loading, error, refetch } = useDataFetcher<JobCategoryWithUsers[]>(fetchRolesData)
+
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (openDropdownId) {
+        const target = event.target as HTMLElement
+        // Check if click is outside both the button and the dropdown menu
+        if (!target.closest('[data-dropdown-container]')) {
+          setOpenDropdownId(null)
+          setDropdownPosition(null)
+        }
+      }
+    }
+
+    // Always add listener, but only close if dropdown is open
+    document.addEventListener('click', handleClickOutside)
+    return () => {
+      document.removeEventListener('click', handleClickOutside)
+    }
+  }, [openDropdownId])
 
   // Fetch all users when form is shown or when editing
   useEffect(() => {
@@ -243,7 +274,6 @@ const RolesTabContent = () => {
       }
 
       const result = await response.json()
-      console.log(`Role ${editingRoleId ? 'updated' : 'created'} successfully:`, result)
 
       // Reset form and hide form section
       setRoleName('')
@@ -295,7 +325,6 @@ const RolesTabContent = () => {
       }
 
       const result = await response.json()
-      console.log('Role deleted successfully:', result)
       
       // Refresh the roles list
       refetch()
@@ -603,20 +632,48 @@ const RolesTabContent = () => {
                       )}
                     </td>
                     <td className="px-6 py-2 whitespace-nowrap text-right text-sm font-medium">
-                      <div className="flex items-center justify-end space-x-2">
-                        <button 
-                          onClick={() => handleEdit(role)}
+                      <div className="relative inline-block" data-dropdown-container>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            const buttonRect = (e.currentTarget as HTMLElement).getBoundingClientRect()
+                            
+                            if (openDropdownId === role._id) {
+                              setOpenDropdownId(null)
+                              setDropdownPosition(null)
+                            } else {
+                              // Calculate position - try to show below, but adjust if near bottom
+                              const viewportHeight = window.innerHeight
+                              const dropdownHeight = 150 // Approximate height of dropdown
+                              const spaceBelow = viewportHeight - buttonRect.bottom
+                              const spaceAbove = buttonRect.top
+                              
+                              let x = buttonRect.right - 192 // 192px = 48 * 4 (w-48)
+                              let y: number
+                              
+                              if (spaceBelow >= dropdownHeight || spaceBelow > spaceAbove) {
+                                // Show below button
+                                y = buttonRect.bottom + 4
+                              } else {
+                                // Show above button
+                                y = buttonRect.top - dropdownHeight - 4
+                              }
+                              
+                              // Ensure dropdown doesn't go off screen
+                              if (x < 8) x = 8
+                              if (x + 192 > window.innerWidth - 8) {
+                                x = window.innerWidth - 192 - 8
+                              }
+                              
+                              setOpenDropdownId(role._id)
+                              setDropdownPosition({ x, y })
+                            }
+                          }}
+                          className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg"
+                          title="Role actions"
                           disabled={!!editingRoleId}
-                          className="px-3 py-1 text-[#2a59c1] hover:underline rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:text-primary-600 disabled:hover:bg-transparent"
                         >
-                          Edit
-                        </button>
-                        <button 
-                          onClick={() => handleDelete(role._id, role.name)}
-                          disabled={!!editingRoleId || isDeleting === role._id}
-                          className="px-3 py-1 text-red-600 hover:underline rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:text-red-600 disabled:hover:bg-transparent"
-                        >
-                          {isDeleting === role._id ? 'Deleting...' : 'Delete'}
+                          <FiMoreVertical className="w-5 h-5" />
                         </button>
                       </div>
                     </td>
@@ -636,6 +693,68 @@ const RolesTabContent = () => {
       ) : (
         <div className="bg-white rounded-lg shadow-sm p-12 text-center">
           <p className="text-gray-500">No roles found</p>
+        </div>
+      )}
+
+      {/* Fixed Position Dropdown for Roles */}
+      {openDropdownId && dropdownPosition && rolesData?.some(r => r._id === openDropdownId) && (
+        <div
+          className="fixed w-48 bg-white rounded-md shadow-xl border border-gray-200 z-[9999]"
+          data-dropdown-container
+          style={{
+            left: `${dropdownPosition.x}px`,
+            top: `${dropdownPosition.y}px`
+          }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          {(() => {
+            const role = rolesData?.find(r => r._id === openDropdownId)
+            if (!role) return null
+            
+            return (
+              <div className="py-1">
+                <button
+                  className={`flex items-center w-full px-4 py-2 text-sm text-gray hover:theme-color-bg hover:text-white ${
+                    editingRoleId === role._id ? 'opacity-50 cursor-not-allowed' : ''
+                  }`}
+                  disabled={editingRoleId === role._id || !!editingRoleId}
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    setOpenDropdownId(null)
+                    setDropdownPosition(null)
+                    handleEdit(role)
+                  }}
+                >
+                  {editingRoleId === role._id ? (
+                    <FiLoader className="w-4 h-4 mr-3 animate-spin" />
+                  ) : (
+                    <FiEdit2 className="w-4 h-4 mr-3" />
+                  )}
+                  {editingRoleId === role._id ? 'Editing...' : 'Edit'}
+                </button>
+                <div className="border-t border-gray-100 my-1"></div>
+                <button
+                  className={`flex items-center w-full px-4 py-2 text-sm text-red-600 hover:theme-color-bg hover:text-white ${
+                    (editingRoleId || isDeleting === role._id) ? 'opacity-50 cursor-not-allowed' : ''
+                  }`}
+                  disabled={!!editingRoleId || isDeleting === role._id}
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    setOpenDropdownId(null)
+                    setDropdownPosition(null)
+                    handleDelete(role._id, role.name)
+                  }}
+                >
+                  {isDeleting === role._id ? (
+                    <FiLoader className="w-4 h-4 mr-3 animate-spin" />
+                  ) : (
+                    <FiTrash2 className="w-4 h-4 mr-3" />
+                  )}
+                  {isDeleting === role._id ? 'Deleting...' : 'Delete'}
+                </button>
+              </div>
+            )
+          })()}
         </div>
       )}
     </div>
