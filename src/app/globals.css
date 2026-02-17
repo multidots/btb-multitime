@@ -1,0 +1,200 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 222.2 84% 4.9%;
+    /* Default primary colors (blue) - will be overridden by UISettingsProvider */
+    --color-primary-50: #f0f9ff;
+    --color-primary-100: #e0f2fe;
+    --color-primary-200: #bae6fd;
+    --color-primary-300: #7dd3fc;
+    --color-primary-400: #38bdf8;
+    --color-primary-500: #0ea5e9;
+    --color-primary-600: #0284c7;
+    --color-primary-700: #0369a1;
+    --color-primary-800: #075985;
+    --color-primary-900: #0c4a6e;
+    --font-family-fallback: var(--font-inter), system-ui, sans-serif;
+    
+    /* Theme and button colors - will be overridden by UISettingsProvider */
+    --theme-color: #0b1014;
+    --theme-alt-color: #ffffff;
+    --theme-light-color: #ffe7d9;
+    --primary-button-bg: #0b1014;
+    --primary-button-text: #ffffff;
+    --primary-button-hover-bg: #0b1014;
+    --primary-button-hover-text: #ffffff;
+    --secondary-button-bg: #0b1014;
+    --secondary-button-text: #ffffff;
+    --secondary-button-hover-bg: #0b1014;
+    --secondary-button-hover-text: #ffffff;
+    --active-tab-bg: rgb(255 255 255 / 20%);
+    --active-tab-text: #ffffff;
+  }
+
+  .dark {
+    --background: 222.2 84% 4.9%;
+    --foreground: 210 40% 98%;
+  }
+
+  /* Prevent layout shift from scrollbar appearing/disappearing */
+  /* Space is reserved via JavaScript, scrollbar overlays content */
+  html {
+    overflow-y: auto;
+  }
+
+  /* Apply dynamic font family globally */
+  body {
+    font-family: var(--font-family-fallback, var(--font-inter), system-ui, sans-serif);
+  }
+
+  /* Apply theme color globally */
+  .theme-color {
+    color: var(--theme-color) !important;
+  }
+  .theme-color-bg {
+    background-color: var(--theme-color) !important;
+    color: var(--theme-alt-color) !important;
+  }
+  .theme-color-border {
+    border-color: var(--theme-color) !important;
+  }
+  .theme-alt-color {
+    color: var(--theme-alt-color) !important;
+  }
+  .theme-alt-color-bg {
+    background-color: var(--theme-alt-color) !important;
+    color: var(--theme-color) !important;
+  }
+  .theme-light-color {
+    color: var(--theme-light-color) !important;
+  }
+  .theme-light-color-bg {
+    background-color: var(--theme-light-color) !important;
+  }
+
+  /* Apply button styles globally */
+  .btn-primary {
+    background-color: var(--primary-button-bg) !important;
+    color: var(--primary-button-text) !important;
+    transition: all 0.3s ease;
+    transform: translateY(0);
+    &.btn-primary-black {
+      background-color: #000000 !important;
+      color: #ffffff !important;
+    }
+  }
+  .btn-primary-lite {
+    background-color: var(--theme-light-color) !important;
+    color: var(--theme-color) !important;
+    transition: all 0.3s ease;
+    transform: translateY(0);
+    &:hover {
+      color: var(--theme-color) !important;
+      box-shadow: rgba(17, 12, 46, 0.3) 0px 3px 10px 0px;
+      transform: translateY(-1px);
+      transition: all 0.3s ease;
+    }
+  }
+  .btn-primary:hover {
+    color: var(--primary-button-hover-text) !important;
+    box-shadow: rgba(17, 12, 46, 0.3) 0px 3px 10px 0px;
+    transform: translateY(-1px);
+    transition: all 0.3s ease;
+  }
+
+  .btn-secondary{
+    background-color: var(--secondary-button-bg) !important;
+    color: var(--secondary-button-text) !important;
+    border: 1px solid var(--secondary-button-text) !important;
+    transform: translateY(0);
+    transition: all 0.3s ease;
+    &:hover {
+      transform: translateY(-1px);
+      transition: all 0.3s ease;
+      box-shadow: rgba(17, 12, 46, 0.2) 0px 3px 10px 0px;
+    }
+  }
+
+  .btn-secondary:hover {
+    background-color: var(--secondary-button-hover-bg) !important;
+    color: var(--secondary-button-hover-text) !important;
+  }
+
+  /* Active tab styles */
+  .active-tab {
+    background-color: var(--active-tab-bg) !important;
+    color: var(--active-tab-text) !important;
+  }
+
+  /* Hover tab styles - matches active tab */
+  .hover-tab:hover {
+    background-color: var(--active-tab-bg) !important;
+    color: var(--active-tab-text) !important;
+  }
+
+  /* Global input focus styles - black border on focus */
+  /* input:focus,
+  textarea:focus,
+  select:focus {
+    outline: none !important;
+    border-color: #000000 !important;
+    box-shadow: none !important;
+  } */
+}
+
+@layer utilities {
+  .text-balance {
+    text-wrap: balance;
+  }
+}
+
+/* Custom scrollbar - overlay style (doesn't take space) */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+  background: transparent;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(136, 136, 136, 0.4);
+  border-radius: 4px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(85, 85, 85, 0.6);
+  background-clip: padding-box;
+}
+
+/* Firefox scrollbar - overlay style */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(136, 136, 136, 0.4) transparent;
+}
+
+/* Fade animation for chart bars */
+@keyframes fadeInBar {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.recharts-bar-rectangle rect {
+  animation: fadeInBar 0.6s ease-in-out;
+  opacity: 0;
+  animation-fill-mode: forwards;
+}
+
+
