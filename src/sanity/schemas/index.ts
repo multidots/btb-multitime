@@ -4,7 +4,7 @@ import team from './team'
 import client from './client'
 import project from './project'
 import task from './task'
-import timeEntry from './timeEntry'
+import timesheet from './timesheet'
 import report from './report'
 import contact from './contact'
 import category from './category'
@@ -18,7 +18,7 @@ export const schemaTypes = [
   client,
   project,
   task,
-  timeEntry,
+  timesheet,
   report,
   contact,
   category,

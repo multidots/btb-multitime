@@ -249,6 +249,31 @@ export default defineType({
       description: 'Mark project as archived (soft-removed). Archived projects remain in the DB but are excluded from active lists.',
       initialValue: false,
     }),
+    // Aggregated timesheet hours (updated automatically when timesheet entries change)
+    defineField({
+      name: 'timesheetHours',
+      title: 'Total Timesheet Hours',
+      type: 'number',
+      description: 'Total hours from all timesheets (auto-calculated)',
+      initialValue: 0,
+      readOnly: true,
+    }),
+    defineField({
+      name: 'timesheetApprovedHours',
+      title: 'Approved Timesheet Hours',
+      type: 'number',
+      description: 'Hours from approved timesheets only (auto-calculated)',
+      initialValue: 0,
+      readOnly: true,
+    }),
+    defineField({
+      name: 'timesheetBillableHours',
+      title: 'Billable Timesheet Hours',
+      type: 'number',
+      description: 'Billable hours from all timesheets (auto-calculated)',
+      initialValue: 0,
+      readOnly: true,
+    }),
     defineField({
       name: 'createdAt',
       title: 'Created At',

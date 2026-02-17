@@ -1,5 +1,5 @@
 import type { StructureResolver } from 'sanity/structure'
-import { FiHome, FiUsers, FiBriefcase, FiFolder, FiClock, FiFileText, FiBarChart2, FiSettings } from 'react-icons/fi'
+import { FiHome, FiUsers, FiBriefcase, FiFolder, FiClock, FiFileText, FiBarChart2, FiSettings, FiCalendar } from 'react-icons/fi'
 import { apiVersion } from '../env'
 
 export const structure: StructureResolver = (S) =>
@@ -285,57 +285,59 @@ export const structure: StructureResolver = (S) =>
 
       S.divider(),
 
-      // Time Tracking - Parent with dropdown filters
+      // Timesheets (Weekly) - New structure
       S.listItem()
-        .title('Time Tracking')
-        .icon(FiClock)
+        .title('Timesheets')
+        .icon(FiCalendar)
         .child(
           S.list()
-            .title('Time Tracking')
+            .title('Timesheets')
             .items([
               S.listItem()
-                .title('All Time Entries')
-                .child(S.documentTypeList('timeEntry').title('All Time Entries')),
+                .title('All Timesheets')
+                .child(S.documentTypeList('timesheet').title('All Timesheets')),
               S.listItem()
-                .title('Today\'s Time Entries')
+                .title('Draft')
                 .child(
                   S.documentList()
-                    .title('Today')
-                    .filter('_type == "timeEntry" && date == $today')
-                    .params({ today: new Date().toISOString().split('T')[0] })
+                    .title('Draft Timesheets')
+                    .filter('_type == "timesheet" && status == "unsubmitted"')
                     .apiVersion(apiVersion)
                 ),
               S.listItem()
-                .title('Running Timers')
+                .title('Pending Approval')
                 .child(
                   S.documentList()
-                    .title('Running Timers')
-                    .filter('_type == "timeEntry" && isRunning == true')
+                    .title('Pending Approval')
+                    .filter('_type == "timesheet" && status == "submitted"')
                     .apiVersion(apiVersion)
                 ),
               S.listItem()
-                .title('Submitted & Pending Approval')
+                .title('Approved')
                 .child(
                   S.documentList()
-                    .title('Submitted & Pending Approval')
-                    .filter('_type == "timeEntry" && defined(submittedAt) && submittedAt != null && isApproved == false')
+                    .title('Approved Timesheets')
+                    .filter('_type == "timesheet" && status == "approved"')
                     .apiVersion(apiVersion)
                 ),
               S.listItem()
-                .title('Approved Time Entries')
+                .title('Rejected')
                 .child(
                   S.documentList()
-                    .title('Approved Time Entries')
-                    .filter('_type == "timeEntry" && isApproved == true && isLocked == true')
+                    .title('Rejected Timesheets')
+                    .filter('_type == "timesheet" && status == "rejected"')
                     .apiVersion(apiVersion)
                 ),
               S.listItem()
-                .title('Unsubmitted Time Entries')
+                .title('By User')
                 .child(
-                  S.documentList()
-                    .title('Unsubmitted Time Entries')
-                    .filter('_type == "timeEntry" && (!defined(submittedAt) || submittedAt == null)')
-                    .apiVersion(apiVersion)
+                  S.documentTypeList('user')
+                    .title('Select User')
+                    .child((userId) =>
+                      S.document()
+                        .documentId(userId)
+                        .schemaType('user')
+                    )
                 ),
             ])
         ),
